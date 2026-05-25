@@ -7,6 +7,11 @@ __pycache__/
 .venv/
 venv/
 
+# Claude Code agent-discovery dir — junction to unit_*/<skill-name>/
+# (skill source-of-truth lives under unit_*/; this dir is set up locally per the
+# unit_N/README instructions)
+.claude/
+
 # Editor / OS
 .vscode/
 .idea/

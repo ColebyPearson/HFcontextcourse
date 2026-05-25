@@ -2,12 +2,12 @@
 
 ## Progress Tracker
 
-**Overall: 0/7 units complete.**
+**Overall: 1/7 units fully done (Unit 0). Unit 1 hands-on built; 2 quizzes pending on the HF site.**
 
 | Done | Unit | Topic | Has hands-on? | Has quizzes? |
 |:----:|------|-------|:-------------:|:------------:|
-| ☐ | 0 | Onboarding | — | — |
-| ☐ | 1 | Skills | — | quiz1, quiz2 |
+| ✅ | 0 | Onboarding | — | — |
+| 🟡 | 1 | Skills (built `huggingface-model-publish` skill in `unit_1/`) | — | quiz1, quiz2 (pending) |
 | ☐ | 2 | MCP | ✅ build + deploy MCP server | quiz1, quiz2 |
 | ☐ | 3 | Plugins | — | quiz1, quiz2 |
 | ☐ | 4 | Sub-agents | ✅ multi-agent workflow | quiz1, quiz2 |

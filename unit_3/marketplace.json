@@ -1,0 +1,11 @@
+{
+  "name": "local-context-course",
+  "owner": { "name": "VoicesColeby" },
+  "plugins": [
+    {
+      "name": "text-processor-plugin",
+      "source": "./text-processor-plugin",
+      "description": "Text analysis skills powered by the deployed text-processor MCP server (Unit 2)."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "text-processor": {
+      "type": "sse",
+      "url": "https://voicescoleby-text-processor-mcp.hf.space/gradio_api/mcp/sse"
+    }
+  }
+}

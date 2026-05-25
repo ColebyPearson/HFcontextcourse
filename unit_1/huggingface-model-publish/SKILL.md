@@ -1,6 +1,6 @@
 ---
 name: "huggingface-model-publish"
-description: "Publish fine-tuned models to the Hugging Face Hub end-to-end. Use when pushing PyTorch/transformers models with trainer.push_to_hub, setting model-card metadata (pipeline_tag, tags), or fixing model cards whose YAML frontmatter isn't being indexed."
+description: "Publish, release, or upload a fine-tuned model to the Hugging Face Hub end-to-end after training. Use when pushing PyTorch/transformers models with trainer.push_to_hub, deploying a model to Hugging Face, setting model-card metadata (pipeline_tag, tags), or fixing model cards whose YAML frontmatter or tags aren't showing up / aren't being indexed by HF."
 license: "MIT"
 compatibility: "Python 3.10+; huggingface_hub>=0.20, transformers>=4.40"
 metadata:

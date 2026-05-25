@@ -2,13 +2,13 @@
 
 ## Progress Tracker
 
-**Overall: 1/7 units fully done (Unit 0). Unit 1 hands-on built; 2 quizzes pending on the HF site.**
+**Overall: 1/7 fully done (Unit 0). Units 1 & 2 hands-on built; 4 quizzes pending on the HF site.**
 
 | Done | Unit | Topic | Has hands-on? | Has quizzes? |
 |:----:|------|-------|:-------------:|:------------:|
 | ✅ | 0 | Onboarding | — | — |
 | 🟡 | 1 | Skills (built `huggingface-model-publish` skill in `unit_1/`) | — | quiz1, quiz2 (pending) |
-| ☐ | 2 | MCP | ✅ build + deploy MCP server | quiz1, quiz2 |
+| 🟡 | 2 | MCP (built `text-processor-mcp` in `unit_2/`, deployed to `VoicesColeby/text-processor-mcp`, registered with Claude Code over SSE — `✓ Connected`) | ✅ done | quiz1, quiz2 (pending) |
 | ☐ | 3 | Plugins | — | quiz1, quiz2 |
 | ☐ | 4 | Sub-agents | ✅ multi-agent workflow | quiz1, quiz2 |
 | ☐ | 5 | Hooks | ✅ activity dashboard (Gradio) | quiz1, quiz2 |

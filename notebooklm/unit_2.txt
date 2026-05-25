@@ -1,0 +1,2516 @@
+# 2. MCP: The Model Context Protocol
+
+
+## Introduction to Model Context Protocol
+
+# Introduction to Model Context Protocol
+
+Model Context Protocol (MCP) is an open standard for letting AI applications interact with external data and tools. It sits between your agent and everything else: files, databases, APIs, services.
+
+Unit 1 covered skills which are static, pre-written context that lives alongside your project. Skills are great for fixed knowledge, but they can't fetch new information or take live actions. MCP fills that gap by giving an agent **dynamic context**: it can call functions, read files, query databases, and interact with APIs through a single protocol.
+
+## The M×N Problem
+
+Imagine you want to build an AI agent that can:
+- Read files from your local system
+- Query your company's database
+- Call Slack APIs
+- Access Jira tickets
+- Search a knowledge base
+
+Without a standard protocol, you'd need to write custom integration code for every combination of agent + data source. That's an M×N problem: N agents × M data sources = N×M custom integrations.
+
+MCP eliminates this. You write your data sources as MCP servers once, and they work with any MCP-compatible agent. One adapter, infinite reuse.
+
+## MCP as Universal Adapter
+
+From a learner's point of view, MCP gives you one consistent way to expose tools, resources, and prompts to agents. The important idea in this intro is simple: build the integration once, then reuse it across compatible agents.
+
+We'll unpack the precise vocabulary in the next lesson: host, client, server, capability types, and the JSON-RPC messages underneath. For now, keep the outcome in mind rather than the wire format.
+
+## Skills + MCP
+
+It's important to mention that MCP was built before skills and in many ways, skills have consumed some of MCP's functionality. However, MCP is still a powerful tool for extending your agent's capabilities, especially under authentication scenarios.
+
+**Skills** are perfect for teaching an AI how to do something (write prompts, analyze emails, code style guidelines).
+
+**MCP** is perfect for giving an AI the ability to do something (read files, call APIs, query databases).
+
+You'll often use both: Skills provide the knowledge, MCP provides the tools and data.
+
+## What You'll Build
+
+This unit covers MCP architecture (hosts, clients, servers, and the three capability types), building servers with FastMCP and Gradio, configuring agents as MCP clients, deploying to Hugging Face Spaces, and a hands-on project tying it together.
+
+
+## MCP Key Concepts and Architecture
+
+# MCP Key Concepts and Architecture
+
+MCP has three roles — **hosts**, **clients**, and **servers** — that exchange three kinds of capability: **tools**, **resources**, and **prompts**.
+
+<iframe
+    src="https://context-course-mcp-handshake.static.hf.space"
+    frameborder="0"
+    width="850"
+    height="450"
+></iframe>
+
+## The Three Roles: Hosts, Clients, and Servers
+
+Every MCP interaction involves three distinct roles:
+
+### Host
+The **host** is the environment where a code agent runs. Examples:
+- Claude Code (CLI tool)
+- Codex (OpenAI's code agent)
+- OpenCode (open source agent)
+- A custom Python script using an AI SDK
+
+The host manages the MCP client connection and presents results to the user. The host doesn't implement MCP itself—it delegates protocol handling to the client.
+
+### Client
+The **client** is the protocol handler inside the host that communicates with MCP servers. It:
+- Discovers available servers and their capabilities
+- Sends requests to servers (call tools, read resources, retrieve prompts)
+- Handles responses and errors
+- Maintains the connection lifecycle
+- Manages authentication if needed
+
+In practice, the client is built into the agent's runtime (like Claude Code's built-in MCP support or Codex's MCP client).
+
+### Server
+The **server** is an external program that exposes capabilities through MCP. It:
+- Defines what tools it provides (with schemas and descriptions)
+- Exposes what resources are available (with URIs and content)
+- Implements prompts (instruction templates)
+- Handles incoming requests from clients
+- Returns results in the MCP protocol format
+
+A server can be:
+- A Python script on your laptop
+- A deployed service on Hugging Face Spaces
+- A containerized application
+- Embedded in your application (like a Gradio app with `mcp_server=True`)
+
+## The Three Capability Types
+
+MCP servers expose three kinds of capabilities to clients:
+
+### Tools
+Tools are callable functions that agents invoke to perform actions or retrieve data. Each tool has a unique name (like `search_github`), a description of what it does, a JSON Schema defining its input parameters, and the actual function implementation. When an agent reasons that a tool would help with the current task, it calls the tool with appropriate parameters, the server executes it and returns results, and the agent incorporates those results into its reasoning. Tools are model-controlled — the agent decides whether and when to call them. They can modify state (writing files, sending messages), include error handling, and return structured or unstructured results.
+
+### Resources
+Resources are read-only data sources that agents can access for information. Each resource has a URI (like `file:///path/to/code.py`), a human-readable name, a description, and a MIME type. When an agent needs information to reason about a problem, it requests a resource by URI, the server retrieves the content, and the agent uses it as context. Unlike tools, resources are application-controlled — the host determines what is exposed. They're always available without being explicitly called, making them ideal for static or semi-static data like project files, documentation, or configuration.
+
+### Prompts
+Prompts are instruction templates that agents can request to help guide their own behavior for specific contexts or domains. Each prompt has a name (like `code_review`), a description of when it applies, optional arguments for dynamic behavior, and the actual template text. When an agent recognizes a situation where a prompt applies, it requests the prompt (optionally with arguments), receives the instantiated text, and uses it to structure its reasoning. Prompts are user-controlled — they're deployed separately and updated independently. They're non-executable text instructions, ideal for standardizing approaches to recurring tasks like code reviews or security audits.
+
+> [!NOTE]
+> On average, about ~90% of MCP usage is for tools.
+
+## Communication Protocol: JSON-RPC Over Transports
+
+MCP uses **JSON-RPC 2.0** as its messaging protocol. Every request and response is a JSON-RPC message. The protocol is transport-agnostic—the same JSON-RPC format works over any transport.
+
+> [!NOTE]
+> A transport can be defined as any communication channel that carries a message. For example, processes that exist on the same machine (stdio), or connect over a network connection (e.g. HTTP).
+
+A typical client request to call a tool:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "search_github",
+    "arguments": {
+      "query": "code agents"
+    }
+  }
+}
+```
+
+The server responds:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "[GitHub search results...]"
+      }
+    ]
+  }
+}
+```
+
+MCP defines specific methods like `tools/list`, `tools/call`, `resources/list`, `resources/read`, and `prompts/get`.
+
+## Transport Mechanisms
+
+The protocol (JSON-RPC) is separate from the transport (how messages move between client and server). MCP defines two standard transports.
+
+### Stdio Transport
+For **local connections** where the server runs on your machine:
+- Server runs as a subprocess of the host
+- Communication happens via stdin/stdout
+- No network overhead
+- Perfect for development and local tools
+- Most secure (no network exposure)
+
+Configuration:
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```bash
+claude mcp add --transport stdio my-server -- python /path/to/server.py
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+```bash
+codex mcp add my-server -- python /path/to/server.py
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+```bash
+opencode mcp add my-server --command "python" --args "/path/to/server.py"
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+Pi has no built-in MCP client. Use `pi-mcp-adapter`, then point it at a standard `.mcp.json` file:
+
+```bash
+pi install npm:pi-mcp-adapter
+```
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "python",
+      "args": ["/path/to/server.py"]
+    }
+  }
+}
+```
+
+</hfoption>
+
+</hfoptions>
+
+### Streamable HTTP Transport
+For **remote connections** where the server runs elsewhere:
+- Client makes HTTP POST requests to a single endpoint
+- Server responds with JSON-RPC results or SSE streams
+- Works across the internet and through firewalls
+- Ideal for cloud deployments and shared resources
+- Supports authentication headers and session management
+
+Streamable HTTP is the current standard for remote MCP servers, introduced in protocol revision 2025-03-26 and carried forward in subsequent revisions. The older HTTP+SSE transport from 2024-11-05 is deprecated but still supported for backward compatibility.
+
+Configuration:
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```bash
+claude mcp add hf-mcp-server -t http "https://huggingface.co/mcp?login"
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+```
+codex mcp add hf-mcp-server --url "https://huggingface.co/mcp?login"
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+```json
+{
+  "mcp": {
+    "remote-server": {
+      "type": "remote",
+      "url": "https://your-server.example.com/mcp"
+    }
+  }
+}
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+With `pi-mcp-adapter` installed, configure remote servers in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "hf-mcp-server": {
+      "url": "https://huggingface.co/mcp?login"
+    }
+  }
+}
+```
+
+Open `/mcp` inside Pi to inspect or connect to the server on demand.
+
+</hfoption>
+
+</hfoptions>
+
+| Aspect | Stdio | Streamable HTTP |
+|--------|-------|-----------------|
+| **Location** | Local | Remote |
+| **Network** | None | Internet |
+| **Setup** | Simple | Simple |
+| **Performance** | Very fast | Network latency |
+| **Security** | No exposure | Requires auth |
+| **Use Case** | Development, single user | Production, teams, cloud |
+
+## MCP Architecture Diagram
+
+Here's how it all fits together:
+
+```
+┌─────────────────────────────────────────┐
+│         Code Agent (Host)               │
+│    (Claude Code, Codex, OpenCode)       │
+└──────────┬──────────────────────────────┘
+           │
+           │ MCP Client
+           │ JSON-RPC messages
+           │
+    ┌──────┴─────────┬──────────────┬──────────────┐
+    │                │              │              │
+    ▼                ▼              ▼              ▼
+┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐
+│  GitHub    │  │   Slack    │  │  Internal  │  │  Project   │
+│ MCP Server │  │ MCP Server │  │ API Server │  │ MCP Server │
+│            │  │            │  │            │  │            │
+│ Tools:     │  │ Tools:     │  │ Tools:     │  │ Resources: │
+│ -list_prs  │  │ -send_msg  │  │ -query_db  │  │ -code.py   │
+│ -search    │  │ -list_msgs │  │ -update    │  │ -docs.md   │
+│            │  │            │  │            │  │            │
+└────────────┘  └────────────┘  └────────────┘  └────────────┘
+```
+
+The agent's client can communicate with multiple servers simultaneously and compose their capabilities.
+
+## Tools vs. Resources vs. Prompts: A Comparison
+
+| Aspect | Tools | Resources | Prompts |
+|--------|-------|-----------|---------|
+| **Control** | Model-controlled | Application-controlled | User-controlled |
+| **Mutability** | Can modify state | Read-only | Static |
+| **Invocation** | Agent decides when | Agent requests by URI | Host provides |
+| **Use Case** | Actions, functions | Data, context | Instructions |
+| **Example** | Call an API | Read a file | Code review template |
+
+## The MCP Lifecycle
+
+When you configure and use MCP servers:
+
+1. **Configuration** — Define servers in your host/client config
+2. **Connection** — Client establishes connection to each server
+3. **Discovery** — Client requests list of available tools, resources, and prompts
+4. **Operation** — Agent calls tools, reads resources, retrieves prompts as needed
+5. **Shutdown** — Client closes connection (usually when host shuts down)
+
+Servers can be:
+- Started on demand (stdio servers)
+- Always running (Streamable HTTP servers)
+- Dynamically added or removed
+- Updated without restarting the host (for Streamable HTTP)
+
+## Key Takeaways
+
+Hosts run agents, clients request capabilities, and servers provide them. Tools, resources, and prompts cover the range of what agents need. JSON-RPC carries the messages; stdio handles local transport and Streamable HTTP handles remote. Together they solve the M×N integration problem with a single protocol.
+
+Next, we'll build our first MCP server.
+
+
+## Building MCP Servers with Python
+
+# Building MCP Servers with Python
+
+With the architecture in hand, this lesson builds real servers — first with the FastMCP SDK for lightweight servers, then with Gradio for servers that come with a web UI.
+
+<iframe
+    src="https://context-course-mcp-transports.static.hf.space"
+    frameborder="0"
+    width="850"
+    height="450"
+></iframe>
+
+## Setting Up FastMCP
+
+FastMCP is the easiest way to build MCP servers. Install it with:
+
+```bash
+pip install "mcp[cli]"
+```
+
+The `mcp` package includes the FastMCP SDK; the `[cli]` extra adds the `mcp` command used for testing further down.
+
+## Creating Your First Server with FastMCP
+
+Let's build a simple calculator server. Create `calculator_server.py`:
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("calculator")
+
+@mcp.tool()
+def add(a: int, b: int) -> int:
+    """Add two numbers together."""
+    return a + b
+
+@mcp.tool()
+def multiply(a: int, b: int) -> int:
+    """Multiply two numbers together."""
+    return a * b
+
+if __name__ == "__main__":
+    mcp.run()
+```
+
+FastMCP automatically:
+- Infers parameter types from function signatures
+- Generates JSON schemas from docstrings
+- Creates tool descriptions from function docstrings
+- Uses stdio transport by default
+- Handles the JSON-RPC protocol for you
+
+Run it:
+```bash
+python calculator_server.py
+```
+
+The server listens on stdin/stdout for JSON-RPC requests.
+
+## More Complex Tools with Parameters
+
+Let's build a tool that reads and analyzes files:
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("file-analyzer")
+
+@mcp.tool()
+def read_file(path: str) -> str:
+    """Read the contents of a file.
+    
+    Args:
+        path: The absolute file path to read
+    
+    Returns:
+        The file contents as a string
+    """
+    try:
+        with open(path, 'r') as f:
+            return f.read()
+    except FileNotFoundError:
+        return f"Error: File not found at {path}"
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+@mcp.tool()
+def count_lines(path: str) -> int:
+    """Count the number of lines in a file.
+    
+    Args:
+        path: The absolute file path
+    
+    Returns:
+        The number of lines in the file
+    """
+    try:
+        with open(path, 'r') as f:
+            return len(f.readlines())
+    except Exception as e:
+        return -1
+
+@mcp.tool()
+def list_directory(path: str) -> list[str]:
+    """List files in a directory.
+    
+    Args:
+        path: The directory path
+    
+    Returns:
+        A list of file names in the directory
+    """
+    try:
+        return os.listdir(path)
+    except Exception as e:
+        return []
+
+if __name__ == "__main__":
+    mcp.run()
+```
+
+Key features:
+- **Docstrings become descriptions** — The first line is the tool description; additional sections describe parameters
+- **Type hints enable validation** — Parameters are automatically validated based on types
+- **Error handling** — Return meaningful error messages instead of raising exceptions
+- **Return types** — FastMCP infers what results to return
+
+## Adding Resources to Your Server
+
+Resources provide read-only data. Use the `@mcp.resource()` decorator:
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("documentation")
+
+# Define resources
+@mcp.resource("doc://api/overview")
+def api_overview() -> str:
+    """API overview and getting started guide."""
+    return """# API Overview
+
+This API provides tools for user management, data querying, and report generation.
+
+## Getting Started
+1. Authenticate with your API token
+2. Call endpoints with appropriate parameters
+3. Handle responses and errors gracefully
+
+## Rate Limits
+- 100 requests per minute per API key
+- Burst limit: 10 requests per second
+"""
+
+@mcp.resource("doc://api/endpoints")
+def api_endpoints() -> str:
+    """Complete list of API endpoints."""
+    return """# API Endpoints
+
+## Users
+- GET /users - List all users
+- POST /users - Create a user
+- GET /users/{id} - Get a specific user
+- PUT /users/{id} - Update a user
+
+## Data
+- POST /query - Execute a database query
+- GET /data/{id} - Retrieve data
+
+## Reports
+- GET /reports - List reports
+- POST /reports - Generate a report
+"""
+
+@mcp.tool()
+def get_api_status() -> dict:
+    """Check the current API status."""
+    return {
+        "status": "operational",
+        "uptime_percent": 99.99,
+        "response_time_ms": 45
+    }
+
+if __name__ == "__main__":
+    mcp.run()
+```
+
+Resources:
+- Are identified by URIs (e.g., `doc://api/overview`)
+- Return static or semi-static content
+- Can be text, JSON, or any string content
+- Don't require parameters (unlike tools)
+- Are always available to agents
+
+## Adding Prompts
+
+Prompts are instruction templates that guide agent behavior:
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("prompts-server")
+
+@mcp.prompt()
+def code_review_prompt(language: str = "python") -> str:
+    """Template for reviewing code in a specific language."""
+    return f"""You are an expert {language} code reviewer. 
+Analyze the provided code and provide feedback on:
+1. Correctness and logic
+2. Performance and efficiency
+3. Code style and readability
+4. Security implications
+5. Testing coverage
+
+Be constructive and suggest improvements."""
+
+@mcp.prompt()
+def security_audit_prompt() -> str:
+    """Template for security audits."""
+    return """Conduct a security audit of the provided code or system. Check for:
+1. Authentication vulnerabilities
+2. Authorization issues
+3. Data validation gaps
+4. SQL injection or injection attacks
+5. Insecure dependencies
+6. Sensitive information exposure
+
+Rate each finding by severity (critical, high, medium, low)."""
+
+@mcp.tool()
+def get_available_prompts() -> list[str]:
+    """List available prompt templates."""
+    return ["code_review_prompt", "security_audit_prompt"]
+
+if __name__ == "__main__":
+    mcp.run()
+```
+
+## Error Handling in FastMCP
+
+Handle errors gracefully by returning error messages:
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("safe-operations")
+
+@mcp.tool()
+def divide(numerator: float, denominator: float) -> str:
+    """Divide two numbers.
+    
+    Args:
+        numerator: The dividend
+        denominator: The divisor
+    
+    Returns:
+        The quotient or an error message
+    """
+    try:
+        if denominator == 0:
+            return "Error: Cannot divide by zero"
+        result = numerator / denominator
+        return f"Result: {result}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def parse_json(data: str) -> str:
+    """Parse a JSON string.
+    
+    Args:
+        data: JSON string to parse
+    
+    Returns:
+        Parsed JSON or error message
+    """
+    import json
+    try:
+        parsed = json.loads(data)
+        return f"Valid JSON: {parsed}"
+    except json.JSONDecodeError as e:
+        return f"Invalid JSON: {str(e)}"
+
+if __name__ == "__main__":
+    mcp.run()
+```
+
+Best practices:
+- Return error messages instead of raising exceptions
+- Include helpful context in error messages
+- Validate input parameters before using them
+- Log failures for debugging
+
+## Testing Your Server Locally
+
+### Run the server directly
+
+```bash
+python calculator_server.py
+```
+
+This starts the server on stdio. You can send JSON-RPC messages on stdin, but it's usually easier to use one of the inspectors below.
+
+### MCP Inspector (recommended)
+
+The official inspector is a web UI that connects to any MCP server and lets you call tools, read resources, and fetch prompts.
+
+Using the `mcp` CLI from `mcp[cli]`:
+
+```bash
+mcp dev calculator_server.py
+```
+
+Or run the inspector directly with npx:
+
+```bash
+npx @modelcontextprotocol/inspector python calculator_server.py
+```
+
+Both open the inspector in your browser and connect it to the server over stdio.
+
+## Gradio MCP Integration
+
+FastMCP is the better default when you want a pure MCP server. Gradio is useful when you want the same functions to be usable by both agents and humans in a browser.
+
+Install Gradio with MCP support:
+
+```bash
+pip install "gradio[mcp]"
+```
+
+Create a Gradio app with MCP:
+
+```python
+
+def letter_counter(word: str, letter: str) -> int:
+    """Count occurrences of a letter in text.
+
+    Args:
+        word: The input text
+        letter: The letter to search for
+
+    Returns:
+        The count of the letter
+    """
+    return word.lower().count(letter.lower())
+
+def reverse_text(text: str) -> str:
+    """Reverse a string.
+
+    Args:
+        text: The input text
+
+    Returns:
+        The reversed text
+    """
+    return text[::-1]
+
+# Create UI
+with gr.Blocks() as demo:
+    with gr.Tab("Letter Counter"):
+        word_input = gr.Textbox(label="Enter text")
+        letter_input = gr.Textbox(label="Enter letter")
+        count_output = gr.Number(label="Count")
+        gr.Button("Count").click(letter_counter, [word_input, letter_input], count_output)
+
+    with gr.Tab("Text Reversal"):
+        text_input = gr.Textbox(label="Enter text")
+        reversed_output = gr.Textbox(label="Reversed")
+        gr.Button("Reverse").click(reverse_text, [text_input], reversed_output)
+
+if __name__ == "__main__":
+    demo.launch(mcp_server=True)
+```
+
+Launch with `mcp_server=True` to automatically:
+- Convert functions into MCP tools
+- Create a web UI at `http://localhost:7860`
+- Expose an MCP endpoint at `http://localhost:7860/gradio_api/mcp/`
+- Handle JSON-RPC serialization automatically
+
+Your functions are now both web UI components AND MCP tools.
+
+> [!NOTE]
+> Exposing tools through a UI is useful because:
+> - Non-agent users can interact with the same functions in a browser
+> - You get a quick human test harness for the tools
+>
+> Agent-only setups do **not** require UI.
+
+For `@gr.mcp.resource()`, `@gr.api()`, deployment, and authentication details, continue to the dedicated Gradio lesson next. This page only needs the core idea: `mcp_server=True` turns the same functions into both browser handlers and MCP tools.
+
+## Key Takeaways
+
+FastMCP turns docstrings into tool descriptions and type hints into JSON schemas. Tools are callable functions, resources expose read-only data through URIs, and prompts serve as instruction templates. Finish the pure-server path first: add error handling, test locally, and only then decide whether you want a browser UI. If you do, Gradio adds one with `mcp_server=True`, and the next lesson goes deeper on Gradio-specific MCP features.
+
+Next we'll point our agents at these servers.
+
+
+## Quiz 1: MCP Fundamentals
+
+# Quiz 1: MCP Fundamentals
+
+Test your understanding of MCP architecture and core concepts. Choose the best answer for each question.
+
+## Question 1: The M×N Integration Problem
+
+<Question
+  choices={[
+    {
+      text: "Without MCP, you need M agents × N tools separate integrations",
+      explain: "Correct! This is the integration complexity MCP solves. With MCP, you build N servers once, and any agent can use them.",
+      correct: true
+    },
+    {
+      text: "Agents can only integrate with one tool at a time",
+      explain: "Not the core issue. The M×N problem is about integration complexity across all agent-tool pairs.",
+      correct: false
+    },
+    {
+      text: "MCP requires a different implementation for every agent",
+      explain: "Opposite! MCP is universal—one server works with all MCP-compatible agents.",
+      correct: false
+    },
+    {
+      text: "Modern APIs eliminate the need for MCP",
+      explain: "APIs are part of the solution, but they don't standardize how agents discover and use capabilities. MCP does.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 2: Hosts, Clients, and Servers
+
+<Question
+  choices={[
+    {
+      text: "Host runs the agent, Client requests capabilities, Server provides them",
+      explain: "Perfect! The Host is the agent's environment (Claude Code, Codex, OpenCode). The Client is the protocol handler requesting from servers. The Server exposes capabilities.",
+      correct: true
+    },
+    {
+      text: "Server runs the agent, Client provides data, Host makes requests",
+      explain: "Incorrect roles. The Host runs the agent, not the Server.",
+      correct: false
+    },
+    {
+      text: "Client runs the agent, Server requests capabilities, Host provides them",
+      explain: "No. The Client requests, not the Server. The Host runs the agent.",
+      correct: false
+    },
+    {
+      text: "All three are interchangeable roles",
+      explain: "Each has a distinct responsibility. They're not interchangeable.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 3: Tools vs. Resources vs. Prompts
+
+<Question
+  choices={[
+    {
+      text: "Tools: callable functions | Resources: read-only data | Prompts: instruction templates",
+      explain: "Exactly! Tools perform actions or queries. Resources provide static data. Prompts guide agent behavior.",
+      correct: true
+    },
+    {
+      text: "Tools: static data | Resources: callable functions | Prompts: configurations",
+      explain: "Backwards. Tools are callable, Resources are data.",
+      correct: false
+    },
+    {
+      text: "All three are the same capability type",
+      explain: "No. Each serves a different purpose and has different characteristics.",
+      correct: false
+    },
+    {
+      text: "Resources and Prompts don't exist in modern MCP",
+      explain: "False. All three capability types are core MCP features.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 4: MCP Transport Mechanisms
+
+<Question
+  choices={[
+    {
+      text: "Stdio for local servers, Streamable HTTP for remote servers",
+      explain: "Correct! Stdio uses subprocess communication (fast, simple, local). Streamable HTTP is the current standard for remote connections, replacing the older HTTP+SSE transport.",
+      correct: true
+    },
+    {
+      text: "HTTP+SSE is the only remote transport option",
+      explain: "HTTP+SSE is now deprecated. Streamable HTTP is the current standard remote transport in the MCP specification.",
+      correct: false
+    },
+    {
+      text: "Always use Streamable HTTP—it's more powerful",
+      explain: "Streamable HTTP has network overhead. Use stdio for local development, which is simpler and faster.",
+      correct: false
+    },
+    {
+      text: "Transport is irrelevant; MCP hides it from agents",
+      explain: "Transport matters for deployment and performance, though the JSON-RPC protocol is the same regardless of transport.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 5: Skills vs. MCP
+
+<Question
+  choices={[
+    {
+      text: "Skills: static context. MCP: dynamic, real-time access to tools and data",
+      explain: "Perfect! Skills are pre-written and bundled. MCP servers provide live access that changes without agent restart.",
+      correct: true
+    },
+    {
+      text: "MCP is just a newer name for Skills",
+      explain: "No. They're complementary but distinct. Skills teach how to think; MCP provides what to access.",
+      correct: false
+    },
+    {
+      text: "MCP is only for APIs; Skills are for everything else",
+      explain: "MCP covers tools, resources, and prompts. Skills are for context teaching.",
+      correct: false
+    },
+    {
+      text: "You have to choose between Skills and MCP",
+      explain: "You use both together. Skills provide knowledge; MCP provides tools.",
+      correct: false
+    }
+  ]}
+/>
+
+## Summary
+
+How did you do? If you got 4-5 questions correct, you have a solid grasp of MCP fundamentals. If you struggled, review "Key Concepts and Architecture" before moving to the next section.
+
+Key concepts to remember:
+- **MCP solves the M×N problem** with universal server standard
+- **Three roles**: Host (agent location), Client (protocol handler), Server (capability provider)
+- **Three capabilities**: Tools (callable), Resources (data), Prompts (instructions)
+- **Two transports**: Stdio (local development), Streamable HTTP (remote/production)
+- **Skills + MCP work together** to teach and enable agent capabilities
+
+
+## Configuring Agents as MCP Clients
+
+# Configuring Agents as MCP Clients
+
+Claude Code, Codex, and OpenCode are all MCP clients. Your job is to tell each one which servers to connect to and how.
+
+## How Code Agents Act as MCP Clients
+
+Once an MCP server is configured, the agent connects to it, discovers which tools and resources it exposes, and treats them like built-in capabilities. The agent's MCP client handles discovery, request routing, and errors behind the scenes.
+
+## Adding an MCP Server
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+Use the `claude mcp add` command. Options must come before the server name:
+
+**Stdio (local) server:**
+```bash
+claude mcp add --transport stdio <name> -- <command> [args]
+```
+
+**HTTP (remote) server:**
+```bash
+claude mcp add --transport http <name> <url>
+```
+
+**Examples:**
+```bash
+# Local Python server
+claude mcp add --transport stdio calculator -- python /path/to/server.py
+
+# Remote HTTP server
+claude mcp add --transport http my-api https://api.example.com/mcp
+
+# With scope and env vars
+claude mcp add --transport stdio --scope user --env API_KEY=xxx github -- npx -y @modelcontextprotocol/server-github
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+Use the `codex mcp add` command or edit `config.toml` directly:
+
+**CLI:**
+```bash
+codex mcp add <name> --env VAR=VALUE -- <command> [args]
+```
+
+**config.toml** (at `~/.codex/config.toml` or `.codex/config.toml`):
+
+```toml
+# Stdio server
+[mcp_servers.calculator]
+command = "python"
+args = ["/path/to/server.py"]
+
+# HTTP server
+[mcp_servers.my-api]
+url = "https://api.example.com/mcp"
+
+# With env vars
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+
+[mcp_servers.github.env]
+GITHUB_TOKEN = "ghp_xxxxx"
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+Edit `opencode.json` in your project root:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "calculator": {
+      "type": "local",
+      "command": ["python", "/path/to/server.py"]
+    },
+    "my-api": {
+      "type": "remote",
+      "url": "https://api.example.com/mcp"
+    },
+    "github": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-github"],
+      "environment": {
+        "GITHUB_TOKEN": "ghp_xxxxx"
+      }
+    }
+  }
+}
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+Pi uses the `pi-mcp-adapter` package rather than a built-in MCP client.
+
+Install once:
+
+```bash
+pi install npm:pi-mcp-adapter
+```
+
+Then add servers to `.mcp.json` (project) or `~/.config/mcp/mcp.json` (shared user config):
+
+```json
+{
+  "mcpServers": {
+    "calculator": {
+      "command": "python",
+      "args": ["/path/to/server.py"]
+    },
+    "my-api": {
+      "url": "https://api.example.com/mcp"
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_xxxxx"
+      }
+    }
+  }
+}
+```
+
+</hfoption>
+
+</hfoptions>
+
+## Managing Servers
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```bash
+# List all configured servers
+claude mcp list
+
+# Get details for a specific server
+claude mcp get <name>
+
+# Remove a server
+claude mcp remove <name>
+
+# Check status in-session
+/mcp
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+```bash
+# View active servers in-session
+/mcp
+```
+
+You can also edit `~/.codex/config.toml` directly. Set `enabled = false` to temporarily disable a server without removing it:
+
+```toml
+[mcp_servers.my-api]
+url = "https://api.example.com/mcp"
+enabled = false
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+```bash
+# List all servers and auth status
+opencode mcp list
+
+# Debug connection issues
+opencode mcp debug <name>
+
+# Authenticate with a server
+opencode mcp auth <name>
+
+# Remove stored credentials
+opencode mcp logout <name>
+```
+
+Set `"enabled": false` in `opencode.json` to disable a server without removing it.
+
+</hfoption>
+
+<hfoption id="Pi">
+
+```text
+/mcp
+/mcp tools
+/mcp reconnect
+/mcp reconnect <server>
+/mcp-auth <server>
+```
+
+Use `/mcp` for the interactive panel, `/mcp tools` to list discovered tools, and `/mcp reconnect` when a lazy-loaded server needs to be reconnected.
+
+</hfoption>
+
+</hfoptions>
+
+## Configuration Scopes
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+Claude Code supports three scopes, controlled with the `--scope` flag:
+
+- **`local`** (default) — Current project only, private to you (stored in `~/.claude.json`)
+- **`project`** — Shared with team via version control (stored in `.mcp.json` at project root)
+- **`user`** — Available across all your projects (stored in `~/.claude.json`)
+
+```bash
+# Add at user scope (available everywhere)
+claude mcp add --transport http --scope user my-api https://api.example.com/mcp
+
+# Add at project scope (shared with team)
+claude mcp add --transport http --scope project my-api https://api.example.com/mcp
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+Codex supports two scopes:
+
+- **Global** — `~/.codex/config.toml` (applies to all projects)
+- **Project** — `.codex/config.toml` (project-scoped, only in trusted projects)
+
+The CLI and IDE extension share this configuration.
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+OpenCode supports two scopes:
+
+- **Project** — `opencode.json` in the project root
+- **Organization** — Default servers from `.well-known/opencode` endpoint, which users can opt into
+
+Local config values override remote organization defaults.
+
+</hfoption>
+
+<hfoption id="Pi">
+
+With `pi-mcp-adapter`, config can live at four levels:
+
+- **Shared user** — `~/.config/mcp/mcp.json`
+- **Pi user override** — `~/.pi/agent/mcp.json`
+- **Shared project** — `.mcp.json`
+- **Pi project override** — `.pi/mcp.json`
+
+Project files override user-global files. Prefer `.mcp.json` for repo-shared config and `.pi/mcp.json` only when you need a Pi-specific override.
+
+</hfoption>
+
+</hfoptions>
+
+## Transport Types
+
+All three agents support two primary transports:
+
+- **Stdio** — Local subprocess communication via stdin/stdout. Best for development servers and tools that need direct system access.
+- **Streamable HTTP** — Remote connections over HTTP. The current standard for cloud-deployed servers. Works across the internet and through firewalls.
+
+SSE (Server-Sent Events) is a legacy transport that is deprecated but still supported for backward compatibility.
+
+## The Hugging Face MCP Ecosystem
+
+Hugging Face provides official MCP servers for Hub integration. Configure them in any MCP-compatible agent:
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```bash
+claude mcp add --transport http --scope user hf-mcp "https://huggingface.co/mcp?login"
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+```toml
+# In ~/.codex/config.toml
+[mcp_servers.hf-mcp]
+url = "https://huggingface.co/mcp?login"
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+```json
+{
+  "mcp": {
+    "hf-mcp": {
+      "type": "remote",
+      "url": "https://huggingface.co/mcp?login"
+    }
+  }
+}
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+```json
+{
+  "mcpServers": {
+    "hf-mcp": {
+      "url": "https://huggingface.co/mcp?login"
+    }
+  }
+}
+```
+
+</hfoption>
+
+</hfoptions>
+
+The HF MCP server gives agents access to searching for models and datasets, reading repository files, querying model cards, and browsing Hub content.
+
+> [!TIP]
+> Visit huggingface.co/settings/mcp to see official MCP servers and configuration examples for your agent.
+
+## Configuring Remote MCP Servers
+
+For servers deployed to Hugging Face Spaces or other cloud platforms, use Streamable HTTP:
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```bash
+claude mcp add --transport http --scope user sentiment-analyzer https://username-sentiment.hf.space/mcp
+
+claude mcp add --transport http --scope user code-reviewer https://username-reviewer.hf.space/mcp
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+```toml
+# In ~/.codex/config.toml
+[mcp_servers.sentiment-analyzer]
+url = "https://username-sentiment.hf.space/mcp"
+
+[mcp_servers.code-reviewer]
+url = "https://username-reviewer.hf.space/mcp"
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+```json
+{
+  "mcp": {
+    "sentiment-analyzer": {
+      "type": "remote",
+      "url": "https://username-sentiment.hf.space/mcp"
+    },
+    "code-reviewer": {
+      "type": "remote",
+      "url": "https://username-reviewer.hf.space/mcp"
+    }
+  }
+}
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+```json
+{
+  "mcpServers": {
+    "sentiment-analyzer": {
+      "url": "https://username-sentiment.hf.space/mcp"
+    },
+    "code-reviewer": {
+      "url": "https://username-reviewer.hf.space/mcp"
+    }
+  }
+}
+```
+
+</hfoption>
+
+</hfoptions>
+
+Remote servers via Streamable HTTP don't require restarting your agent, work across the internet and firewalls, can be updated independently, and support optional authentication via headers.
+
+## Debugging MCP Configurations
+
+If a server isn't working, check these things:
+
+**1. List configured servers:**
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```bash
+claude mcp list
+claude mcp get <server-name>
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+Check `~/.codex/config.toml` or run `/mcp` in-session.
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+```bash
+opencode mcp list
+opencode mcp debug <server-name>
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+Open the interactive MCP panel:
+
+```text
+/mcp
+/mcp tools
+/mcp reconnect <server-name>
+```
+
+Also verify the shared config files Pi reads:
+
+```bash
+cat .mcp.json
+cat .pi/mcp.json
+```
+
+</hfoption>
+
+</hfoptions>
+
+**2. Test the server manually:**
+
+```bash
+python /path/to/server.py
+```
+
+If the server crashes, you'll see the error immediately.
+
+**3. Check environment variables:**
+
+```bash
+echo $GITHUB_TOKEN
+```
+
+If empty, the server won't have required secrets.
+
+**4. Check remote server URLs:**
+
+```bash
+curl "https://your-space.hf.space/mcp"
+```
+
+Should return a valid response if the server is running.
+
+## Configuration Best Practices
+
+Use environment variables for API keys and secrets, absolute paths for local server scripts, and one server per capability area (e.g. keep GitHub and Slack servers separate). Test servers locally first before deploying to the cloud. Use descriptive server names that indicate what each server provides, document your configuration, and keep configs in version control — without secrets.
+
+## Key Takeaways
+
+Claude Code uses `claude mcp add`, Codex uses `codex mcp add` or `config.toml`, OpenCode uses `opencode.json`, and Pi commonly uses `pi-mcp-adapter` plus `.mcp.json`. The pattern is the same: name a server, pick a transport, and point it at a command (stdio) or URL (Streamable HTTP). Keep secrets in environment variables and test servers locally before debugging client config.
+
+Next we'll look at Gradio's MCP integration in depth.
+
+
+## Gradio MCP Integration: Web UIs + MCP Servers
+
+# Gradio MCP Integration: Web UIs + MCP Servers
+
+This lesson picks up where the previous server-building lesson left off. You already saw the minimal `mcp_server=True` pattern; here the goal is to go deeper on when Gradio is a good fit, how to expose MCP-only surfaces, and how to deploy the result safely.
+
+## What Is Gradio MCP Integration?
+
+Gradio is a Python library for building web UIs for machine learning models and data processing tools. When you enable MCP support, Gradio:
+
+1. Converts your functions into MCP tools automatically
+2. Creates a web interface for humans
+3. Exposes an MCP endpoint for agents
+4. Handles JSON-RPC serialization and protocol details
+
+You get two interfaces for the price of one: humans use the web UI, agents use MCP.
+
+## Installing Gradio with MCP Support
+
+Install Gradio with MCP support:
+
+```bash
+pip install "gradio[mcp]"
+```
+
+Create a `requirements.txt` for deployment:
+
+```
+gradio>=4.0.0
+```
+
+> [!TIP]
+> Type hints and docstrings are essential. Gradio uses them to generate the MCP tool schema. Always include:
+> - Type hints on all parameters and return value
+> - A docstring description
+> - An `Args:` section documenting each parameter
+> - A `Returns:` section describing the output
+
+## Building a Practical Gradio MCP App
+
+Instead of another hello-world example, let's build a small text toolkit that is useful both in a browser and through MCP:
+
+```python
+
+def analyze_text(text: str) -> str:
+    """Analyze text and compute statistics.
+    
+    Args:
+        text: The input text to analyze
+    
+    Returns:
+        JSON with analysis results
+    """
+    words = text.split()
+    chars = len(text)
+    
+    return json.dumps({
+        "words": len(words),
+        "characters": chars,
+        "average_word_length": round(chars / len(words), 2) if words else 0
+    })
+
+def reverse_text(text: str) -> str:
+    """Reverse a string.
+    
+    Args:
+        text: Input text
+    
+    Returns:
+        The reversed text
+    """
+    return text[::-1]
+
+def count_vowels(text: str) -> int:
+    """Count vowels in text.
+    
+    Args:
+        text: Input text
+    
+    Returns:
+        Number of vowels
+    """
+    vowels = "aeiouAEIOU"
+    return sum(1 for char in text if char in vowels)
+
+# Create interface
+with gr.Blocks(title="Text Tools") as demo:
+    gr.Markdown("# Text Processing Tools")
+    
+    with gr.Tab("Analyze Text"):
+        text_input1 = gr.Textbox(label="Enter text", lines=5)
+        analysis_output = gr.Textbox(label="Analysis", lines=5)
+        gr.Button("Analyze").click(analyze_text, text_input1, analysis_output)
+    
+    with gr.Tab("Reverse Text"):
+        text_input2 = gr.Textbox(label="Enter text", lines=5)
+        reverse_output = gr.Textbox(label="Reversed", lines=5)
+        gr.Button("Reverse").click(reverse_text, text_input2, reverse_output)
+    
+    with gr.Tab("Count Vowels"):
+        text_input3 = gr.Textbox(label="Enter text")
+        vowel_output = gr.Number(label="Vowel Count")
+        gr.Button("Count").click(count_vowels, text_input3, vowel_output)
+
+if __name__ == "__main__":
+    demo.launch(mcp_server=True)
+```
+
+Each function becomes a separate MCP tool that agents can call independently.
+
+## Advanced Gradio MCP Features
+
+### Exposing Resources with @gr.mcp.resource()
+
+Define read-only data resources that agents can access:
+
+```python
+
+@gr.mcp.resource("config://api")
+def api_documentation() -> str:
+    """API documentation and endpoints."""
+    return """# API Documentation
+    
+## Endpoints
+- GET /users - List all users
+- POST /users - Create user
+- GET /users/{id} - Get specific user
+
+## Authentication
+Use Bearer token in Authorization header.
+"""
+
+# Your tools and UI here...
+
+if __name__ == "__main__":
+    demo.launch(mcp_server=True)
+```
+
+Resources are identified by URIs and provide static or semi-static content that agents can read.
+
+### MCP-Only Functions with @gr.api()
+
+Define tools that exist only in MCP, not in the web UI:
+
+```python
+
+@gr.api()
+def query_database(sql: str) -> str:
+    """Execute a database query (MCP only).
+    
+    Args:
+        sql: SQL query string
+    
+    Returns:
+        Query results
+    """
+    # Only accessible via MCP, not web UI
+    return "Query results..."
+
+@gr.api()
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email (MCP only).
+    
+    Args:
+        to: Recipient email
+        subject: Email subject
+        body: Email body
+    
+    Returns:
+        Confirmation message
+    """
+    # Only accessible via MCP
+    return f"Email sent to {to}"
+
+# Regular UI components here...
+
+if __name__ == "__main__":
+    demo.launch(mcp_server=True)
+```
+
+### Authentication
+
+Gradio's `auth` argument on `launch()` gates the **web UI** with HTTP basic auth. It does **not** protect the `/gradio_api/mcp/` MCP endpoint — by design, agents can reach it without logging in.
+
+```python
+
+def authenticate(username: str, password: str) -> bool:
+    return username == "admin" and password == "secret"
+
+# `auth` protects the web UI only; MCP remains open.
+if __name__ == "__main__":
+    demo.launch(mcp_server=True, auth=authenticate)
+```
+
+For production, authenticate the MCP endpoint outside Gradio: put the app behind a reverse proxy that enforces auth on `/gradio_api/mcp/`, deploy it as a private Hugging Face Space, or use an MCP gateway that implements the [MCP Authorization spec](https://modelcontextprotocol.io/specification/basic/authorization).
+
+## Deploying to Hugging Face Spaces
+
+Hugging Face Spaces provides free hosting for Gradio apps with MCP support.
+
+### Step 1: Create a New Space
+
+1. Go to [huggingface.co/new-space](https://huggingface.co/new-space)
+2. Name your Space
+3. Select "Gradio" as the SDK
+4. Create the Space
+
+### Step 2: Upload Your Code
+
+Create `app.py` in your Space:
+
+```python
+
+def my_tool(input_text: str) -> str:
+    """Do something with input.
+    
+    Args:
+        input_text: The input
+    
+    Returns:
+        The result
+    """
+    return f"Processed: {input_text}"
+
+demo = gr.Interface(fn=my_tool, inputs="text", outputs="text")
+
+if __name__ == "__main__":
+    demo.launch(mcp_server=True)
+```
+
+### Step 3: Add Dependencies (if needed)
+
+Create `requirements.txt`:
+
+```
+gradio>=4.0.0
+requests>=2.28.0
+```
+
+Your Space automatically installs dependencies on each build.
+
+### Step 4: Access Your MCP Server
+
+Once deployed, your MCP server is available at:
+
+```
+https://[your-username]-[space-name].hf.space/gradio_api/mcp/
+```
+
+Configure your agent to use it:
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```bash
+claude mcp add --transport http --scope user my-tools https://yourname-space-name.hf.space/gradio_api/mcp/
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+```toml
+# In ~/.codex/config.toml
+[mcp_servers.my-tools]
+url = "https://yourname-space-name.hf.space/gradio_api/mcp/"
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+```json
+{
+  "mcp": {
+    "my-tools": {
+      "type": "remote",
+      "url": "https://yourname-space-name.hf.space/gradio_api/mcp/"
+    }
+  }
+}
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+With `pi-mcp-adapter` installed, add the Space endpoint to `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-tools": {
+      "url": "https://yourname-space-name.hf.space/gradio_api/mcp/"
+    }
+  }
+}
+```
+
+Open `pi` and use `/mcp tools` to confirm the adapter can see the Gradio-generated tools.
+
+</hfoption>
+
+</hfoptions>
+
+> [!TIP]
+> Your Space's MCP endpoint uses Streamable HTTP transport. Configuration changes take effect immediately without agent restarts.
+
+## Function Signature Best Practices
+
+For optimal MCP tool generation, follow these patterns:
+
+```python
+# Good: Clear types, docstring, Args/Returns sections
+def process_data(data: str, format: str = "json") -> str:
+    """Process data in specified format.
+    
+    Args:
+        data: Input data string
+        format: Output format (default: json)
+    
+    Returns:
+        Processed data as string
+    """
+    return data
+
+# Good: Handles multiple parameters
+def calculate(a: float, b: float, operation: str) -> float:
+    """Perform mathematical operation.
+    
+    Args:
+        a: First number
+        b: Second number
+        operation: Operation (add, subtract, multiply, divide)
+    
+    Returns:
+        Result of operation
+    """
+    if operation == "add":
+        return a + b
+    # ... more operations
+
+# Avoid: Missing type hints
+def bad_function(data):  # No return type!
+    return data
+
+# Avoid: No docstring
+def also_bad(text: str) -> str:
+    return text.upper()
+
+# Avoid: Complex types without clarification
+def confusing(data: dict) -> list:  # What's in the dict/list?
+    return []
+```
+
+Best practices:
+- Use simple, clear type hints (str, int, float, bool, list)
+- Include docstring with description
+- Document every parameter in Args section
+- Describe the return value in Returns section
+- Return strings, numbers, or lists (simple types)
+- Return JSON strings for complex data
+
+## Troubleshooting Gradio MCP
+
+### Functions Not Appearing as MCP Tools
+
+Check your function signatures:
+- Must have type hints on all parameters
+- Must have a docstring
+- Docstring must include "Args:" section
+- Return type must be specified
+
+```python
+# This will work
+def my_tool(text: str) -> str:
+    """Process text.
+    
+    Args:
+        text: Input text
+    
+    Returns:
+        Processed text
+    """
+    return text.upper()
+
+# This won't work (no docstring)
+def bad_tool(text: str) -> str:
+    return text.upper()
+```
+
+### MCP Endpoint Not Responding
+
+If the endpoint doesn't work:
+1. Check Space is running (not in error state)
+2. Use correct endpoint: `https://user-space.hf.space/gradio_api/mcp/`
+3. Test with curl: `curl https://user-space.hf.space/gradio_api/mcp/`
+4. Check Space logs for errors
+
+### Type Mismatch Errors
+
+Agents may fail if return types don't match specification:
+
+```python
+# Correct: Returns string as declared
+def correct(x: int) -> str:
+    return str(x * 2)
+
+# Wrong: Declares string but returns int
+def wrong(x: int) -> str:
+    return x * 2  # Returns int, not string!
+```
+
+Always ensure actual return types match declared types.
+
+## Performance Tips for Production Spaces
+
+1. **Keep functions fast** — Agents timeout after ~60 seconds
+2. **Validate inputs** — Check data size before processing
+3. **Handle errors gracefully** — Return error messages instead of crashing
+4. **Cache expensive results** — Avoid redundant computation
+5. **Monitor resource usage** — Spaces have limited CPU/memory
+
+```python
+
+def analyze(data: str) -> str:
+    """Analyze large datasets.
+    
+    Args:
+        data: Input data
+    
+    Returns:
+        Analysis results
+    """
+    # Reject too-large inputs
+    if len(data) > 1_000_000:
+        return "Error: Input too large (max 1MB)"
+    
+    # Show progress
+    start = time.time()
+    # ... do analysis
+    elapsed = time.time() - start
+    
+    if elapsed > 30:
+        return "Error: Processing took too long"
+    
+    return "Results..."
+```
+
+## Key Takeaways
+
+`mcp_server=True` gives you a web UI and an MCP server from the same Gradio app. Gradio relies on type hints and docstrings to build the tool schemas, so keep both tight. Spaces is a quick way to host MCP servers publicly; `@gr.api()` hides tools from the UI, and `@gr.mcp.resource()` exposes read-only data.
+
+Next we'll put these pieces together in a hands-on project.
+
+
+## Hands-On: Build and Deploy an MCP Server
+
+# Hands-On: Build and Deploy an MCP Server
+
+In this project, you'll build a complete MCP server that provides text processing tools, test it locally, and deploy it to Hugging Face Spaces.
+
+## Project Overview
+
+You'll create a text processing MCP server that allows code agents to:
+- Analyze text statistics (word count, character count, etc.)
+- Extract key phrases and entities
+- Check spelling and grammar basics
+- Summarize text
+
+This is a real, shareable tool that works with any MCP-compatible agent.
+
+## Part 1: Build the Server Locally
+
+### Step 1: Set Up Your Project
+
+```bash
+mkdir text-processor-mcp
+cd text-processor-mcp
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install "mcp[cli]"
+```
+
+### Step 2: Create the FastMCP Server
+
+Create `server.py`:
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("text-processor")
+
+@mcp.tool()
+def analyze_text(text: str) -> str:
+    """Analyze text and return statistics.
+    
+    Args:
+        text: The input text to analyze
+    
+    Returns:
+        JSON string with analysis results
+    """
+    words = text.split()
+    chars = len(text)
+    chars_no_spaces = len(text.replace(" ", ""))
+    sentences = text.count(".") + text.count("!") + text.count("?")
+    
+    avg_word_length = round(chars_no_spaces / len(words), 2) if words else 0
+    avg_sentence_length = round(len(words) / max(sentences, 1), 2)
+    
+    return json.dumps({
+        "total_characters": chars,
+        "characters_without_spaces": chars_no_spaces,
+        "total_words": len(words),
+        "total_sentences": max(sentences, 1),
+        "average_word_length": avg_word_length,
+        "average_sentence_length": avg_sentence_length,
+        "unique_words": len(set(word.lower() for word in words))
+    })
+
+@mcp.tool()
+def extract_keywords(text: str, count: int = 5) -> str:
+    """Extract keywords (most common words) from text.
+    
+    Args:
+        text: The input text
+        count: Number of keywords to return (default 5)
+    
+    Returns:
+        JSON string with keywords and frequencies
+    """
+    # Remove common words
+    stopwords = {
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "is", "are", "was", "were", "be", "been", "by", "from"
+    }
+    
+    words = text.lower().split()
+    filtered = [w.strip(".,!?;:") for w in words if w.lower() not in stopwords]
+    
+    from collections import Counter
+    word_freq = Counter(filtered)
+    top_words = word_freq.most_common(count)
+    
+    return json.dumps({
+        "keywords": [{"word": w, "frequency": f} for w, f in top_words]
+    })
+
+@mcp.tool()
+def check_reading_level(text: str) -> str:
+    """Estimate reading difficulty level.
+    
+    Args:
+        text: The input text
+    
+    Returns:
+        JSON string with reading level estimate
+    """
+    sentences = max(text.count(".") + text.count("!") + text.count("?"), 1)
+    words = len(text.split())
+    syllables = text.count("a") + text.count("e") + text.count("i") + text.count("o") + text.count("u")
+    
+    if words == 0:
+        return json.dumps({"error": "No text to analyze"})
+    
+    # Flesch Kincaid Grade
+    grade = (0.39 * (words / sentences)) + (11.8 * (syllables / words)) - 15.59
+    grade = max(0, round(grade, 1))
+    
+    if grade < 6:
+        level = "Elementary School"
+    elif grade < 9:
+        level = "Middle School"
+    elif grade < 13:
+        level = "High School"
+    else:
+        level = "College/Academic"
+    
+    return json.dumps({
+        "grade_level": grade,
+        "reading_level": level
+    })
+
+@mcp.tool()
+def reverse_text(text: str) -> str:
+    """Reverse a string.
+    
+    Args:
+        text: The input text
+    
+    Returns:
+        The reversed text
+    """
+    return text[::-1]
+
+if __name__ == "__main__":
+    mcp.run()
+```
+
+### Step 3: Test the Server Locally
+
+Start the server:
+```bash
+python server.py
+```
+
+The server listens on stdin/stdout. Open it in the MCP Inspector to list and call tools:
+
+```bash
+mcp dev server.py
+```
+
+This launches the inspector in your browser connected to your server, where you can see all four tools and try them.
+
+## Part 2: Create a Gradio Web UI + MCP Server
+
+Create `app.py` to add a web interface:
+
+```python
+
+def analyze_text(text: str) -> str:
+    """Analyze text and return statistics.
+    
+    Args:
+        text: The input text to analyze
+    
+    Returns:
+        JSON string with analysis results
+    """
+    words = text.split()
+    chars = len(text)
+    chars_no_spaces = len(text.replace(" ", ""))
+    sentences = text.count(".") + text.count("!") + text.count("?")
+    
+    avg_word_length = round(chars_no_spaces / len(words), 2) if words else 0
+    avg_sentence_length = round(len(words) / max(sentences, 1), 2)
+    
+    return json.dumps({
+        "total_characters": chars,
+        "characters_without_spaces": chars_no_spaces,
+        "total_words": len(words),
+        "total_sentences": max(sentences, 1),
+        "average_word_length": avg_word_length,
+        "average_sentence_length": avg_sentence_length
+    }, indent=2)
+
+def extract_keywords(text: str, count: int = 5) -> str:
+    """Extract keywords (most common words) from text.
+    
+    Args:
+        text: The input text
+        count: Number of keywords to return (default 5)
+    
+    Returns:
+        JSON string with keywords and frequencies
+    """
+    stopwords = {
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "is", "are", "was", "were", "be", "been", "by", "from"
+    }
+    
+    words = text.lower().split()
+    filtered = [w.strip(".,!?;:") for w in words if w.lower() not in stopwords]
+    
+    from collections import Counter
+    word_freq = Counter(filtered)
+    top_words = word_freq.most_common(count)
+    
+    return json.dumps({
+        "keywords": [{"word": w, "frequency": f} for w, f in top_words]
+    }, indent=2)
+
+def check_reading_level(text: str) -> str:
+    """Estimate reading difficulty level.
+    
+    Args:
+        text: The input text
+    
+    Returns:
+        JSON string with reading level estimate
+    """
+    sentences = max(text.count(".") + text.count("!") + text.count("?"), 1)
+    words = len(text.split())
+    vowels = "aeiou"
+    syllables = sum(1 for c in text.lower() if c in vowels)
+    
+    if words == 0:
+        return json.dumps({"error": "No text to analyze"})
+    
+    grade = max(0, (0.39 * (words / sentences)) + (11.8 * (syllables / words)) - 15.59)
+    
+    if grade < 6:
+        level = "Elementary School"
+    elif grade < 9:
+        level = "Middle School"
+    elif grade < 13:
+        level = "High School"
+    else:
+        level = "College/Academic"
+    
+    return json.dumps({
+        "grade_level": round(grade, 1),
+        "reading_level": level
+    }, indent=2)
+
+# Create web UI
+with gr.Blocks(title="Text Processor") as demo:
+    gr.Markdown("# Text Processing Tools")
+    gr.Markdown("Analyze text statistics, extract keywords, and check reading difficulty.")
+    
+    with gr.Tab("Analyze Text"):
+        text_input1 = gr.Textbox(
+            label="Enter text",
+            lines=8,
+            placeholder="Paste your text here..."
+        )
+        analysis_output = gr.Textbox(label="Analysis Results", lines=8)
+        gr.Button("Analyze", size="lg").click(analyze_text, text_input1, analysis_output)
+    
+    with gr.Tab("Extract Keywords"):
+        text_input2 = gr.Textbox(label="Enter text", lines=8)
+        count_input = gr.Slider(1, 20, value=5, step=1, label="Number of keywords")
+        keywords_output = gr.Textbox(label="Keywords", lines=8)
+        gr.Button("Extract", size="lg").click(
+            extract_keywords,
+            [text_input2, count_input],
+            keywords_output
+        )
+    
+    with gr.Tab("Reading Level"):
+        text_input3 = gr.Textbox(label="Enter text", lines=8)
+        level_output = gr.Textbox(label="Reading Level Analysis", lines=5)
+        gr.Button("Check Level", size="lg").click(check_reading_level, text_input3, level_output)
+
+if __name__ == "__main__":
+    demo.launch(mcp_server=True)
+```
+
+Test it:
+```bash
+pip install gradio
+python app.py
+```
+
+Visit `http://localhost:7860` to use the web UI. The MCP endpoint is automatically available at `http://localhost:7860/gradio_api/mcp/`.
+
+## Part 3: Deploy to Hugging Face Spaces
+
+### Step 1: Create a New Space
+
+1. Go to [huggingface.co/new-space](https://huggingface.co/new-space)
+2. Name it (e.g., `text-processor-mcp`)
+3. Select "Gradio" SDK
+4. Choose "Public"
+5. Create
+
+### Step 2: Upload Your Files
+
+Create these files in your Space:
+
+**app.py** — Use the Gradio version from Part 2
+
+**requirements.txt:**
+```
+gradio>=4.0.0
+```
+
+The Space will automatically build and deploy.
+
+### Step 3: Configure Your Agent
+
+Once deployed, add your Space's MCP endpoint to your agent:
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```bash
+claude mcp add --transport http --scope user text-processor https://YOUR-USERNAME-text-processor-mcp.hf.space/gradio_api/mcp/
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+```toml
+# In ~/.codex/config.toml
+[mcp_servers.text-processor]
+url = "https://YOUR-USERNAME-text-processor-mcp.hf.space/gradio_api/mcp/"
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+```json
+{
+  "mcp": {
+    "text-processor": {
+      "type": "remote",
+      "url": "https://YOUR-USERNAME-text-processor-mcp.hf.space/gradio_api/mcp/"
+    }
+  }
+}
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+Install the adapter once:
+
+```bash
+pi install npm:pi-mcp-adapter
+```
+
+Then add the deployed server to `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "text-processor": {
+      "url": "https://YOUR-USERNAME-text-processor-mcp.hf.space/gradio_api/mcp/"
+    }
+  }
+}
+```
+
+Open `pi`, then use `/mcp` if you want to verify the server and its tools before prompting.
+
+</hfoption>
+
+</hfoptions>
+
+### Step 4: Test with Your Agent
+
+Restart your agent. Now you can ask it:
+
+- "Analyze the readability of this text: [text]"
+- "What are the keywords in this article?"
+- "What's the reading level of this passage?"
+
+Your agent will use the MCP server to process text in real-time.
+
+## Debugging
+
+If the server doesn't work:
+
+1. **Check Space logs** — Click "Logs" in the Space UI
+2. **Test the web UI** — Confirm the Gradio app works at `https://your-space.hf.space`
+3. **Verify MCP endpoint** — Test `https://your-space.hf.space/gradio_api/mcp/` in your browser
+4. **Check function signatures** — Ensure all functions have type hints and docstrings
+5. **Test locally first** — Debug on your machine before deploying
+
+## Challenge Extensions
+
+Try these improvements:
+
+1. **Add sentiment analysis** — Detect positive/negative tone
+2. **Add language detection** — Identify the language of text
+3. **Add text summarization** — Create short summaries
+4. **Add spell checking** — Identify misspelled words
+5. **Add readability tips** — Suggest improvements for clarity
+
+## Key Takeaways
+
+You've built an MCP server with FastMCP, wrapped the same functions in a Gradio UI that doubles as an MCP server, deployed it to Hugging Face Spaces, and pointed an agent at it. The same pattern scales to API integrations, data processing, and custom analysis tools.
+
+
+## Quiz 2: MCP in Practice
+
+# Quiz 2: MCP in Practice
+
+Test your understanding of building, configuring, and deploying MCP systems. Choose the best answer.
+
+## Question 1: FastMCP Server Building
+
+<Question
+  choices={[
+    {
+      text: "Use FastMCP decorators (@mcp.tool()) to define functions as MCP tools",
+      explain: "Correct! FastMCP infers types from function signatures and generates schemas automatically.",
+      correct: true
+    },
+    {
+      text: "Write raw JSON-RPC messages for each tool",
+      explain: "Possible but tedious. FastMCP handles the protocol for you.",
+      correct: false
+    },
+    {
+      text: "Gradio is the only way to build MCP servers",
+      explain: "Gradio is convenient, but FastMCP is more flexible for complex logic.",
+      correct: false
+    },
+    {
+      text: "MCP servers must be written in JavaScript",
+      explain: "MCP is language-agnostic. Python, JavaScript, Go, Rust all work.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 2: Type Hints and Docstrings
+
+<Question
+  choices={[
+    {
+      text: "Type hints and docstrings are essential for MCP tool schemas",
+      explain: "Exactly! Type hints generate schemas, docstrings provide descriptions. Always include both.",
+      correct: true
+    },
+    {
+      text: "Type hints are optional; MCP infers types from usage",
+      explain: "Type hints are essential. Without them, MCP can't generate proper schemas.",
+      correct: false
+    },
+    {
+      text: "Only Gradio MCP requires type hints",
+      explain: "All MCP servers benefit from type hints. Clients need to know parameter types.",
+      correct: false
+    },
+    {
+      text: "Docstrings are just for human readers",
+      explain: "Docstrings are used by MCP to generate tool descriptions and argument docs.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 3: Tools vs. Resources vs. Prompts
+
+<Question
+  choices={[
+    {
+      text: "Tools: actions | Resources: read-only data | Prompts: instructions",
+      explain: "Perfect! Each serves a different purpose in agent workflows.",
+      correct: true
+    },
+    {
+      text: "Tools and Resources are interchangeable",
+      explain: "No. Tools are called by agents; Resources are data agents read.",
+      correct: false
+    },
+    {
+      text: "Resources are for UI only, not for agents",
+      explain: "Resources are designed for agents! They provide context agents can access.",
+      correct: false
+    },
+    {
+      text: "Prompts are the same as Tools",
+      explain: "No. Prompts are instruction templates; Tools are callable functions.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 4: Gradio MCP Integration
+
+<Question
+  choices={[
+    {
+      text: "Use demo.launch(mcp_server=True) to enable MCP automatically",
+      explain: "Correct! One parameter enables both web UI and MCP endpoint.",
+      correct: true
+    },
+    {
+      text: "Gradio and MCP are separate; you need both libraries",
+      explain: "Gradio includes MCP support with gradio[mcp]. No separate library needed.",
+      correct: false
+    },
+    {
+      text: "You need to manually implement the MCP protocol in Gradio",
+      explain: "Gradio handles it automatically. Just write functions with type hints.",
+      correct: false
+    },
+    {
+      text: "Gradio MCP only works with simple functions",
+      explain: "Gradio MCP works with complex functions, multiple parameters, and advanced types.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 5: Configuring Agents to Use MCP Servers
+
+<Question
+  choices={[
+    {
+      text: "Configure servers via CLI commands (like claude mcp add) or config files, depending on the agent",
+      explain: "Correct! Claude Code uses CLI commands; other agents use config files. Remote Streamable HTTP servers can often be added without restarts.",
+      correct: true
+    },
+    {
+      text: "Agents automatically discover all available MCP servers",
+      explain: "No. You must explicitly configure which servers each agent can access.",
+      correct: false
+    },
+    {
+      text: "You need a special GUI tool to configure MCP servers",
+      explain: "Nope. Just edit JSON config files directly.",
+      correct: false
+    },
+    {
+      text: "Each agent needs its own custom MCP SDK integration",
+      explain: "False! MCP is a standard protocol. Agents are built as MCP clients already.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 6: Deploying to Hugging Face Spaces
+
+<Question
+  choices={[
+    {
+      text: "Create a Space, upload app.py with mcp_server=True, add requirements.txt",
+      explain: "Perfect! Spaces auto-builds and exposes the MCP endpoint.",
+      correct: true
+    },
+    {
+      text: "Spaces doesn't support MCP yet",
+      explain: "Spaces fully supports MCP via Gradio. It's the recommended deployment target.",
+      correct: false
+    },
+    {
+      text: "You need to configure network ports and manage server processes",
+      explain: "Spaces handles all of this. Just push your app code.",
+      correct: false
+    },
+    {
+      text: "MCP servers on Spaces only work with private access",
+      explain: "Spaces can be public or private. MCP works with both.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 7: Transport Mechanisms
+
+<Question
+  choices={[
+    {
+      text: "Use stdio for local servers, Streamable HTTP for remote deployment",
+      explain: "Exactly! Stdio is fast for subprocess communication. Streamable HTTP is the current standard for remote MCP connections.",
+      correct: true
+    },
+    {
+      text: "Streamable HTTP is always better because it's 'network-native'",
+      explain: "Streamable HTTP has network overhead. Use stdio locally for speed.",
+      correct: false
+    },
+    {
+      text: "Once deployed, you must switch from stdio to Streamable HTTP",
+      explain: "You choose transport at configuration time. No switching mid-deployment.",
+      correct: false
+    },
+    {
+      text: "Transport is internal to MCP; agents don't see the difference",
+      explain: "True! Agents use the same tool interface regardless of transport.",
+      correct: false
+    }
+  ]}
+/>
+
+## Question 8: MCP Security
+
+<Question
+  choices={[
+    {
+      text: "Use environment variables for secrets; never hardcode them in config",
+      explain: "Excellent! Env vars keep secrets out of version control.",
+      correct: true
+    },
+    {
+      text: "Hardcode API tokens in config if it's 'private'",
+      explain: "Even private configs can be exposed. Always use environment variables.",
+      correct: false
+    },
+    {
+      text: "Use relative paths in server configuration",
+      explain: "Use absolute paths! Relative paths break depending on working directory.",
+      correct: false
+    },
+    {
+      text: "There's no security consideration for MCP configuration",
+      explain: "Configuration files can contain sensitive info. Protect them carefully.",
+      correct: false
+    }
+  ]}
+/>
+
+## Summary
+
+How many did you get right?
+
+- **7-8 correct**: You're ready to build and deploy real MCP systems!
+- **5-6 correct**: Good understanding. Review configuration and deployment sections.
+- **3-4 correct**: Review the building and integration sections.
+- **0-2 correct**: Go back through the unit and review the core concepts.
+
+## Key Takeaways
+
+- **FastMCP** is the simplest way to build servers with decorators
+- **Type hints and docstrings** are essential for MCP tool schemas
+- **Gradio with `mcp_server=True`** creates UI + MCP automatically
+- **Configure servers in agent config files** (or use MCPClient in code)
+- **Use stdio locally, Streamable HTTP for remote deployment**
+- **Always use environment variables** for secrets
+- **Deploy to Hugging Face Spaces** for easy sharing
+
+You've mastered Unit 2! You can now build, deploy, and configure MCP servers for any agent.

@@ -1,0 +1,1920 @@
+# 1. Skills: Portable Knowledge for Code Agents
+
+
+## Unit 1: Agent Skills
+
+# Unit 1: Agent Skills
+
+**Agent skills** are the foundational building block of agent context. This unit covers what they are, how they're structured, and how to install and write them.
+
+## Why Context Engineering Matters
+
+Without the right context, even a capable agent is working blind. It fills gaps with guesses, asks questions it shouldn't need to ask, and wastes time on work that has to be redone. They can start failing on ordinary tasks instead of just hard tasks. Instead of needing a better model, the agent needs better context.
+
+For example, ask Claude Code to "publish a dataset to Hugging Face" with no extra context, and the agent has to guess at authentication, schema, and required fields. It may get stuck, ask clarifying questions, or fill in plausible but wrong values. This wastes time and tokens.
+
+Give the same agent authentication instructions, the dataset schema, the API format, and pointers to common pitfalls, and the task finishes faster and more reliably.
+
+>[!TIP]
+> Code agents are only as good as the context you give them.
+>
+> Context engineering is the practice of structuring that context so the agent can find and use it.
+
+This principle runs through the rest of the course. It's the same reason communities publish shared contexts and teams invest in keeping their documentation close to the agent.
+
+## What Are Agent Skills?
+
+A **skill** is a self-contained package of knowledge that makes an agent good at one specific task. Skills are portable across projects and agents, reusable once installed, structured in a format agents can parse, and extensible through links to scripts and APIs.
+
+A skill is essentially an onboarding document for an agent: the same kind of step-by-step guide you'd give a new colleague, but written so the agent can load it on demand.
+
+They typically exist in the form of a directory that contains a `SKILL.md` markdown document with metadata and instructions. The directory is usually filled with key metadata, scripts and references that vary between different types of skills.
+
+## From Prompts to Portable Knowledge
+
+Skills differ from long prompts in one key way: they are structured, reusable, and discoverable. They live beyond a single conversation and can be loaded only when relevant. The next lesson goes deeper on this.
+
+## What You'll Learn in Unit 1
+
+By the end of this unit, you'll understand what skills are and why they matter, the Agent Skills Specification (the open standard for skill structure), the SKILL.md format, how to use skills with agents, how to build your first skill from scratch, and how to debug them when they don't work.
+
+## The Agent Skills Specification
+
+There's a formal standard for how skills are structured, called the **Agent Skills Specification**, maintained at [agentskills.io](https://agentskills.io).
+
+>[!TIP]
+> The Agent Skills Specification defines a portable format for packaging agent knowledge, originally created by Anthropic and now adopted by 30+ code agents worldwide.
+
+This spec ensures:
+- Skills work across different agents and platforms
+- Agents can automatically discover and load relevant skills
+- Communities can share and improve skills together
+- Tools and platforms can be built to support skill workflows
+
+## Why Skills Matter
+
+Without skills, context engineering looks like long repetitive prompts in every conversation, scattered wiki pages, and team members rebuilding the same context independently. With skills, context is defined once, updated in one place, composable across domains, and loaded by the agent on demand.
+
+## Prerequisites for Unit 1
+
+Before diving in, make sure you have:
+- A code agent set up (Claude Code, Codex, or open source)
+- Python installed for running helper scripts
+- A Hugging Face account
+- Familiarity with the command line
+
+If you're not set up yet, go back to Unit 0 and complete the tool setup section.
+
+## Key Takeaways
+
+Skills are portable, structured context that make agents better at specific tasks. They follow the Agent Skills Specification for cross-agent compatibility, and they sit at the heart of context engineering.
+
+
+## What Are Agent Skills?
+
+# What Are Agent Skills?
+
+This lesson looks at skills in more depth: what they are, what problems they solve, and how they compare to prompts.
+
+## The Same Problem, Bigger Workflow
+
+The intro lesson used a simple "publish a dataset to Hugging Face" request to show the basic failure mode: without context, the agent has to guess. Now take that same problem and raise the stakes with a longer workflow:
+
+> "Train a model on this dataset and publish it when done."
+
+This is not a new argument so much as an escalation. The missing context now compounds across several linked decisions instead of just one.
+
+Without proper context, your agent might:
+
+**Failure 1: Authentication Issues**
+```
+Error: Unable to authenticate with Hugging Face Hub
+Hint: Set your HF_TOKEN environment variable
+```   
+The agent knows authentication is needed but not how to set it up in *your* specific environment.
+
+**Failure 2: Incorrect Configuration**
+```
+ValueError: Dataset format not recognized
+Expected: parquet, csv, or arrow
+Got: .npy files
+```
+The agent doesn't know your dataset format or how to convert it.
+
+**Failure 3: Missing Best Practices**
+```
+Model uploaded successfully!
+```
+The model is uploaded, but missing:
+- README documentation
+- Model card with training details
+- License information
+- Example usage code
+
+These failures happen because the agent lacks **domain knowledge**. It knows how to write code, but not the specifics of your workflow, tools, or best practices.
+
+## Skills: The Solution
+
+A **skill** packages domain-specific knowledge in a structured, reusable format that agents can automatically discover and use.
+
+A skill can include:
+- Metadata that helps agents decide when to use it
+- Step-by-step instructions for completing a task
+- Helper scripts that automate common operations
+- Links to documentation and example code
+- Troubleshooting guides for common problems
+
+For example, with a dataset publishing skill, the same agent would:
+1. Automatically discover the skill when you mention publishing
+2. Load authentication instructions and validation scripts
+3. Reference best practices without being prompted
+4. Execute the task reliably and completely
+
+## From Prompts to Portable Knowledge
+
+### The Traditional Approach: Prompt-Based Context
+
+Without skills, you might try to solve this with a detailed prompt:
+
+```
+You are a Hugging Face expert. When publishing models:
+1. First authenticate with HF_TOKEN environment variable
+2. Validate that the dataset is in CSV format with columns: 
+   - text (string)
+   - label (categorical)
+   - split (train/val/test)
+3. Train using these hyperparameters:
+   - learning_rate: 2e-5
+   - batch_size: 32
+   - epochs: 3
+4. After training, create model card with:
+   - Training data description
+   - Model performance metrics
+   - Example usage
+   - License (CC-BY-4.0)
+5. Push to hub with correct organization...
+
+[This continues for hundreds of lines]
+```
+
+**Problems with prompt-based context:**
+- Not reusable: You paste this into every conversation
+- Not shareable: Team members must copy-paste independently
+- Not maintainable: Update once, update everywhere
+- Not discoverable: How do other teams find this knowledge?
+- Not composable: Hard to combine multiple domains
+- Not versioned: No way to track changes or roll back
+
+### The Skill-Based Approach: Structured, Portable Knowledge
+
+A **skill** packages the same knowledge in a structured and reusable format. It follows a consistent directory structure and contains a single SKILL.md file with metadata and instructions.
+
+In short, the structure is:
+
+1. **File structure**: skill-name/ directory with SKILL.md, scripts/, references/
+2. **Metadata format**: YAML frontmatter with name, description, triggers, etc.
+3. **Discovery protocol**: How agents find and load skills automatically
+4. **Compatibility guarantees**: What agents need to implement to support skills
+
+Think of it like a package.json for skills. It ensures compatibility and enables tooling.
+
+The directory structure is:
+
+```
+skill-name/
+├── SKILL.md              # Required: metadata + instructions
+```
+
+The SKILL.md file contains the metadata like name, description, and version, and the instructions:
+
+```markdown
+---
+name: "huggingface-model-publishing"
+description: "Publish models to Hugging Face Hub. Use when uploading models, creating model cards, or managing model versions."
+---
+# Hugging Face Model Publishing Skill
+
+...
+```
+
+**Benefits of skill-based context:**
+- Reusable across projects and teams
+- Shareable through local repos, team registries, and version control
+- Maintainable in one place with version control
+- Composable with other skills
+- Automatically loaded by compliant agents
+- Follows an open standard (Agent Skills Spec)
+
+## Progressive Disclosure: How Agents Load Skills
+
+Here's how the skill loading process works in practice:
+
+<iframe
+    src="https://context-course-skill-loading.static.hf.space"
+    frameborder="0"
+    width="850"
+    height="450"
+></iframe>
+
+This happens automatically and transparently—users don't need to manually activate skills. Agents discover and load them based on task context.
+
+## Real-World Examples of Skills
+
+Here are skills commonly shared in the Hugging Face skills repository:
+
+| Skill | Description |
+|-------|-------------|
+| [Scientific Paper Review](https://github.com/huggingface/skills/tree/main/skills/huggingface-papers) | Discovers scientific papers |
+| [model-training](https://github.com/huggingface/skills/tree/main/skills/huggingface-llm-trainer) | Train models using TRL and popular frameworks |
+| [gradio-ui-builder](https://github.com/huggingface/skills/tree/main/skills/huggingface-gradio) | Build interactive web interfaces for models |
+
+Each skill encodes domain expertise that would take hours to learn from documentation, and makes agents immediately expert in that domain.
+
+## Next Steps
+
+Next, we look at the SKILL.md format itself.
+
+
+## The SKILL.md Format
+
+# The SKILL.md Format
+
+The Agent Skills Specification describes skills as a `SKILL.md` file with YAML frontmatter and Markdown instructions, optionally accompanied by `scripts/`, `references/`, and `assets/` directories. This lesson walks through each piece and how to write them well.
+
+<iframe
+    src="https://context-course-skill-anatomy.static.hf.space"
+    frameborder="0"
+    width="850"
+    height="450"
+></iframe>
+
+## Directory Structure
+
+Skills follow a consistent directory structure defined by the Agent Skills Specification:
+
+```
+skill-name/
+├── SKILL.md              # Required: metadata + instructions
+├── scripts/              # Optional: executable code
+│   ├── validate.py
+│   ├── deploy.sh
+│   └── README.md
+├── references/           # Optional: documentation links
+│   ├── api-reference.md
+│   └── examples.md
+└── assets/               # Optional: templates, data
+    ├── template.yaml
+    └── config-example.json
+```
+
+**Rules:**
+- Directory name must be lowercase with hyphens (skill-name, not SkillName)
+- Consecutive hyphens are NOT allowed (my--skill is invalid)
+- SKILL.md is required and must be in the root
+- Optional directories: scripts/, references/, assets/
+- All relative file paths are resolved from the skill root
+
+## Frontmatter Fields
+
+Every SKILL.md starts with YAML frontmatter that describes the skill. Here's the complete specification:
+
+```yaml
+---
+name: "dataset-publishing"
+description: "Publish datasets to Hugging Face Hub. Use when uploading datasets, creating dataset cards, or managing dataset versions."
+license: "Apache-2.0"
+compatibility: "Tested with Python 3.8+ and huggingface_hub 0.16+"
+metadata:
+  author: "ml-team"
+  version: "1.0.0"
+allowed-tools: "Bash(hf:*) Python(huggingface_hub:*)"
+---
+```
+
+### Required Fields
+
+**`name`** (string)
+- Human-readable identifier for the skill
+- Constraints: lowercase letters, digits, and hyphens; 1-64 characters; no consecutive hyphens
+- Must match the directory name exactly
+- Examples: `"text-classification"`, `"model-evaluation"`, `"dataset-publishing"`
+
+**`description`** (string)
+- Concise description of what the skill does
+- Constraints: max 1024 characters
+- Should include: what task the skill accomplishes, when to use it
+- Format: Start with verb (e.g., "Publish datasets...", "Train models...")
+
+### Optional Fields
+
+**`license`** (string)
+- Software license for the skill
+- Common values: "MIT", "Apache-2.0", "CC-BY-4.0", "GPL-3.0"
+- Indicates how others can use and modify the skill
+
+**`compatibility`** (string)
+- Environment requirements and tested configurations
+- Constraints: max 500 characters
+- Examples:
+  - "Tested with Python 3.8+ and huggingface_hub 0.16+"
+  - "Requires PyTorch 2.0+, transformers 4.30+, and CUDA 11.8"
+  - "Works with Claude Code, Codex, and open source agents"
+
+**`metadata`** (object)
+- Arbitrary key-value pairs for custom data
+- Common keys: `author`, `version`, `created`, `updated`, `maintainer`, `contact`
+
+For example:
+
+```yaml
+metadata:
+  author: "john-doe"
+  version: "1.2.0"
+  created: "2024-01-15"
+  updated: "2026-04-13"
+  maintainer: "john-doe"
+```
+
+**`allowed-tools`** (string, experimental)
+- Glob patterns specifying which tools the skill uses
+- Used by agents to restrict skill execution to specific tools
+- Format: `ToolName(pattern:*)` separated by spaces
+- Examples: `"Bash(git:*) Bash(jq:*) Read"` or `"Bash(hf:*) Python(huggingface_hub:*)"`
+- Currently experimental; not all agents support this field
+
+## Body Content
+
+After frontmatter, the skill should contain detailed instructions organized in Markdown:
+
+```markdown
+# Dataset Publishing Skill
+
+## Overview
+Brief description of what the skill teaches and typical use cases.
+
+## Prerequisites Checklist
+- [ ] Python 3.8 or higher installed
+- [ ] huggingface_hub package installed
+- [ ] Valid Hugging Face account
+- [ ] HF_TOKEN environment variable set
+
+## Step-by-Step Guide
+
+### 1. Authentication
+...
+```
+
+### Content Guidelines
+
+Keep your SKILL.md focused: aim for 400–800 lines maximum, move detailed reference material to the `references/` directory, move code examples to `scripts/`, and use internal links to reference other files like `[validation script](scripts/validate.py)`.
+
+Write for clarity by using `## Section` and `### Subsection` formatting, including copy-paste-ready code examples in fenced code blocks, numbering steps for procedures, and using checklists for prerequisites. Reference external resources with links to documentation, API guides, and example code.
+
+## File References in Skills
+
+When referencing helper scripts and assets, use relative paths from the skill root:
+
+**In SKILL.md:**
+````markdown
+## Validation
+
+Run the validation script:
+```bash
+python scripts/validate_dataset.py data/my_dataset.csv
+```
+
+Generate model card:
+```bash
+python scripts/create_model_card.py --name "My Model" --metrics metrics.json
+````
+
+## Helper Scripts Structure
+
+Scripts are stored in the `scripts/` directory and can be in any programming language:
+
+**scripts/validate_dataset.py**
+```python
+
+from pathlib import Path
+
+def validate_dataset(dataset_path):
+    """Validate dataset meets requirements."""
+    if not Path(dataset_path).exists():
+        raise FileNotFoundError(f"Dataset not found: {dataset_path}")
+    
+    df = pd.read_csv(dataset_path)
+    
+    # Validate required columns
+    required = {'text', 'label'}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+    
+    # Validate no nulls
+    if df.isnull().any().any():
+        raise ValueError("Dataset contains null values")
+    
+    return True
+
+if __name__ == "__main__":
+    import sys
+    try:
+        validate_dataset(sys.argv[1])
+        print("Validation passed!")
+    except Exception as e:
+        print(f"Validation failed: {e}")
+        sys.exit(1)
+```
+
+> [!TIP]
+> Scripts do not require an excessive amount of parameters. In most cases, the agent will regenerate the script with the appropriate parameters. Starting off with the core variables is usually enough to focus the agent on the core functionality.
+
+## References Directory
+
+The `references/` directory contains documentation referenced in SKILL.md:
+
+**references/api-reference.md**
+```markdown
+# Hugging Face Hub API Reference
+
+## Dataset API
+
+### Create Dataset
+```
+
+**references/examples.md**
+```markdown
+# Example Datasets
+
+## Simple CSV Dataset
+- Name: mnist-subset
+- Format: CSV
+- Columns: image_data, label
+- Size: ~10MB
+```
+
+## Assets Directory
+
+The `assets/` directory contains templates and configuration files:
+
+**assets/dataset-card-template.md**
+````markdown
+---
+license: cc-by-4.0
+---
+
+# {DATASET_NAME}
+
+## Dataset Summary
+{Brief description}
+
+## Dataset Structure
+### Data Splits
+{List splits: train, validation, test}
+```
+
+**assets/config-example.yaml**
+````yaml
+dataset:
+  name: my-dataset
+  version: 1.0
+  format: csv
+````
+
+<details>
+<summary>Here's a small but complete skill following the specification</summary>
+
+**skill-name/SKILL.md**
+
+````markdown
+---
+name: "model-card-generator"
+description: "Generate model cards for Hugging Face Hub. Use when documenting models, adding metadata, or creating README files."
+license: "MIT"
+compatibility: "Python 3.8+, requires jinja2"
+metadata:
+  author: "context-course"
+  version: "1.0.0"
+  created: "2026-04-13"
+---
+
+# Model Card Generator Skill
+
+## Overview
+This skill helps create professional model cards and README files for models published to Hugging Face Hub. Model cards document:
+- Model architecture and training data
+- Intended use and limitations
+- Performance metrics
+- Ethical considerations
+- License information
+
+## Prerequisites Checklist
+- [ ] Python 3.8+ installed
+- [ ] jinja2 package installed
+- [ ] Model information available (name, description, metrics)
+
+## Step-by-Step Guide
+
+### 1. Gather Model Information
+Collect the following about your model:
+- Model name and description
+- Training data description
+- Performance metrics (accuracy, F1, BLEU, etc.)
+- Intended use cases
+- Limitations
+- License (MIT, Apache-2.0, CC-BY-4.0, etc.)
+
+### 2. Generate Card
+```python
+from generate_card import create_model_card
+
+metrics = {
+    "accuracy": 0.92,
+    "f1_score": 0.89,
+    "precision": 0.91
+}
+
+card = create_model_card(
+    model_name="My Classifier",
+    description="A transformer-based text classifier",
+    metrics=metrics
+)
+
+with open("README.md", "w") as f:
+    f.write(card)
+```
+
+See [the generation script](scripts/generate_card.py) for more options.
+
+### 3. Customize
+Open README.md and add:
+- Detailed description
+- Training procedure
+- Example usage
+- Citation information
+
+## Helper Scripts
+- [Model card generator](scripts/generate_card.py)
+- [Validation tool](scripts/validate_card.py)
+
+## References
+- [Model Cards Paper](https://arxiv.org/abs/1810.03993)
+- [HF Model Card Template](../references/hf-template.md)
+- [Best Practices](../references/best-practices.md)
+
+## Troubleshooting
+
+### Issue: Frontmatter not rendering
+**Solution**: Ensure dashes are on their own lines in the YAML section:
+```yaml
+---
+license: mit
+---
+```
+
+### Issue: Characters not displaying
+**Solution**: Save file as UTF-8 encoding:
+```bash
+file README.md
+```
+````
+
+**skill-name/scripts/generate_card.py**
+```python
+from datetime import datetime
+from jinja2 import Template
+
+TEMPLATE = """---
+license: {{ license }}
+---
+
+# {{ name }}
+
+{{ description }}
+
+## Performance
+
+| Metric | Value |
+|--------|-------|
+{% for metric, value in metrics.items() %}
+| {{ metric }} | {{ "%.4f" | format(value) }} |
+{% endfor %}
+
+## Model Details
+- Created: {{ created_date }}
+- Framework: PyTorch
+
+## Uses
+This model is suitable for {{ use_cases }}.
+
+## Limitations
+- Trained on specific domain data
+- May not generalize to other domains
+"""
+
+def create_model_card(model_name, description, metrics, license="mit", use_cases="classification"):
+    """Generate a model card."""
+    template = Template(TEMPLATE)
+    return template.render(
+        name=model_name,
+        description=description,
+        metrics=metrics,
+        license=license,
+        use_cases=use_cases,
+        created_date=datetime.now().isoformat()
+    )
+```
+
+**skill-name/references/best-practices.md**
+```markdown
+# Model Card Best Practices
+
+## Writing Clear Descriptions
+- Describe what the model does in one sentence
+- Explain the training data source
+- Mention the model architecture
+- List performance metrics
+
+## Performance Documentation
+- Always include actual metrics, not just claims
+- Use standard benchmarks where possible
+- Document evaluation methodology
+- Show limitations honestly
+
+## License Selection
+- Choose a permissive license (MIT, Apache-2.0)
+- CC-BY-4.0 for non-software content
+- CC0 for datasets
+- Be clear about dependencies' licenses
+```
+
+</details>
+
+## Validation with skills-ref
+
+The Agent Skills Specification includes a validation tool called `skills-ref` (available at [agentskills.io](https://agentskills.io)):
+
+```bash
+# Validate a skill directory
+skills-ref validate skill-name/
+
+# Output:
+# ✓ SKILL.md found
+# ✓ name field valid: model-card-generator
+# ✓ description valid (max 1024 chars)
+# ✓ required fields present
+# ⚠ warning: script references use absolute paths (should be relative)
+```
+
+## File Size Guidelines
+
+Keep skills efficient:
+
+| Component | Recommendation | Rationale |
+|-----------|-----------------|-----------|
+| SKILL.md | 400-800 lines | Lightweight discovery and loading |
+| scripts/ | Individual scripts < 500 lines | Easy to understand and modify |
+| Total skill | < 2 MB | Quick download and indexing |
+
+Move large reference materials to external repositories if needed. This keeps the total skill itself small and lightweight, allowing the agent to perform quick downloading and indexing, only pulling heavy reference materials from external sources when needed.
+
+## Writing Tips
+
+### Instructions
+
+> [!TIP]
+> Write instructions for someone who *doesn't* know the task. Assume the agent (and users reading it) need clear, step-by-step guidance.
+
+**Good**: "First, authenticate by running `hf auth login`. This stores your token locally for subsequent commands."
+
+**Not good**: "Authenticate with HF."
+
+### Code Examples
+
+> [!TIP]
+> Always provide copy-paste ready code. Test it yourself before including.
+
+**Good**:
+```bash
+pip install huggingface_hub
+hf auth login
+```
+
+**Not good**: "Install huggingface_hub and log in"
+
+### Frontmatter Metadata
+
+> [!WARNING]
+> Make sure descriptions are realistic and specific. Vague descriptions won't help agents or users discover your skill.
+
+**Good**: "Publish datasets to Hugging Face Hub. Use when uploading datasets, creating dataset cards, or managing dataset versions."
+
+**Not good**: "A dataset skill"
+
+## Next Steps
+
+Next, we'll look at how different agents load skills, then build one from scratch.
+
+
+## Quiz 1: Understanding Skills and the Specification
+
+# Quiz 1: Understanding Skills and the Specification
+
+Test your understanding of skills and the Agent Skills Specification. Answer the following questions to check your knowledge before moving forward.
+
+## Question 1: What is a skill?
+
+<Question
+choices={[
+  {
+    text: "A skill is a long prompt you paste into every conversation",
+    explain: "Not quite. While skills contain similar information to detailed prompts, they're structured and reusable. The key difference is that skills work across projects and teams automatically.",
+    correct: false
+  },
+  {
+    text: "A skill is a reusable package of knowledge (instructions, scripts, and references) that makes agents expert at a specific task",
+    explain: "Correct! Skills are portable, structured packages that include instructions, helper scripts, documentation, and metadata—all designed to make agents reliable at completing specific tasks.",
+    correct: true
+  },
+  {
+    text: "A skill is a feature only available in Claude Code",
+    explain: "No, skills are supported by many agents including Claude Code, Codex, OpenCode, and others. The Agent Skills Specification is an open standard.",
+    correct: false
+  },
+  {
+    text: "A skill is a Python package you install with pip",
+    explain: "No, skills are not Python packages. However, skills can contain Python scripts in their scripts/ directory, and they can live in normal project or team directories.",
+    correct: false
+  }
+]}
+/>
+
+## Question 2: What does the Agent Skills Specification define?
+
+<Question
+choices={[
+  {
+    text: "The best practices for writing Python code in helper scripts",
+    explain: "Not quite. While the spec does cover script storage, it doesn't define Python best practices. The spec focuses on the overall skill structure and metadata format.",
+    correct: false
+  },
+  {
+    text: "Requirements for one hosting or distribution platform only",
+    explain: "No, the Agent Skills Specification is agent-agnostic and applies across all platforms (Claude Code, Codex, OpenCode, etc.). It is not tied to one distribution method.",
+    correct: false
+  },
+  {
+    text: "Guidelines for writing instruction text in skills",
+    explain: "The spec covers some guidance, but it's primarily about the overall structure (directories, metadata, file names) rather than the instruction content itself.",
+    correct: false
+  },
+  {
+    text: "A standard format for packaging agent knowledge, including directory structure, metadata fields, and how agents discover and load skills",
+    explain: "Correct! The Agent Skills Specification (at agentskills.io) defines the portable format that allows skills to work across different agents and platforms.",
+    correct: true
+  }
+]}
+/>
+
+## Question 3: What are the required frontmatter fields in a SKILL.md file?
+
+<Question
+choices={[
+  {
+    text: "name, description, version, and author",
+    explain: "While version and author are useful metadata, they're optional. Only 'name' and 'description' are required by the specification.",
+    correct: false
+  },
+  {
+    text: "Any metadata the creator wants to include",
+    explain: "Not quite. The spec defines specific required fields (name and description) to ensure compatibility and discoverability. Without these, agents can't properly identify and load the skill.",
+    correct: false
+  },
+  {
+    text: "name and description",
+    explain: "Correct! The Agent Skills Specification requires two fields: 'name' (the identifier for the skill) and 'description' (what the skill does and when to use it). Other fields like license, compatibility, and metadata are optional.",
+    correct: true
+  },
+  {
+    text: "There is no required frontmatter—skills can be just Markdown files",
+    explain: "No, frontmatter is essential. It provides metadata that agents use to discover and load skills automatically. Without it, skills won't be recognized by compliant agents.",
+    correct: false
+  }
+]}
+/>
+
+## Question 4: How do agents discover and load skills?
+
+<Question
+choices={[
+  {
+    text: "Agents automatically load all available skills into context at startup",
+    explain: "No, that would be inefficient. Agents use progressive disclosure: they load only skill metadata initially, then activate full skills when the task matches.",
+    correct: false
+  },
+  {
+    text: "Agents read skill metadata to decide if the skill applies, then load the full SKILL.md only when needed—this is called 'progressive disclosure'",
+    explain: "Correct! The discovery process is progressive: agents first check metadata (~100 tokens), then load full skill content only when the task matches. This keeps agent startup fast.",
+    correct: true
+  },
+  {
+    text: "Users must manually activate skills by typing a command like '/skill dataset-publishing'",
+    explain: "While some agents support manual activation, the primary design is automatic discovery. Agents analyze the user's request and load relevant skills on their own.",
+    correct: false
+  },
+  {
+    text: "Skills are only available if installed via npm or pip",
+    explain: "No, skills can be discovered from multiple sources: local directories, shared repositories, community registries, or custom paths. The Agent Skills Specification supports many discovery mechanisms.",
+    correct: false
+  }
+]}
+/>
+
+## Question 5: How many agents support the Agent Skills Specification?
+
+<Question
+choices={[
+  {
+    text: "Only Claude Code and Codex",
+    explain: "No, while Claude Code and Codex are major supporters, the spec is adopted by many agents including OpenCode and other commercial tools.",
+    correct: false
+  },
+  {
+    text: "Only agents developed by Anthropic",
+    explain: "No, the spec is open and platform-agnostic. It was originally created by Anthropic but is now maintained as an open standard and adopted by many organizations.",
+    correct: false
+  },
+  {
+    text: "Only agents from a single vendor or registry",
+    explain: "No, skills can be used with agents available anywhere. Agents can load skills from local directories, team repositories, or other registries as long as they support the spec.",
+    correct: false
+  },
+  {
+    text: "Many agents, including Claude Code, Codex, OpenCode, and others",
+    explain: "Correct! The Agent Skills Specification is an open standard adopted by many agents. This means a single skill works across multiple platforms.",
+    correct: true
+  }
+]}
+/>
+
+---
+
+## Scoring
+
+Count your correct answers:
+- **5/5**: Excellent! You have a solid understanding of skills and the specification. Move on to the next lesson.
+- **4/5**: Good understanding. Review the questions you missed and reread those sections.
+- **3/5 or less**: Consider reviewing the "What Are Skills" and "Skill Format" lessons before continuing.
+
+Ready to learn how to use skills with different agents? Let's move on to the next lesson.
+
+
+## Using Skills with Code Agents
+
+# Using Skills with Code Agents
+
+The Agent Skills Specification keeps the SKILL.md format consistent across agents. What differs is where each agent looks for skills on disk and how you install them.
+
+## Where Skills Live
+
+Each agent discovers skills from known directories. You create a skill by placing a `SKILL.md` file in a named subdirectory at one of these paths:
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+| Scope | Path | Applies to |
+|-------|------|------------|
+| Personal | `~/.claude/skills/<name>/SKILL.md` | All your projects |
+| Project | `.claude/skills/<name>/SKILL.md` | This project only |
+
+Claude Code also watches for changes — adding, editing, or removing a skill takes effect within the current session without restarting.
+
+</hfoption>
+
+<hfoption id="Codex">
+
+| Scope | Path |
+|-------|------|
+| Repository | `.agents/skills/<name>/SKILL.md` |
+| User | `~/.agents/skills/<name>/SKILL.md` |
+| Admin | `/etc/codex/skills/<name>/SKILL.md` |
+
+Codex discovers skills from all three locations; when the same skill name appears in more than one, the repository copy is used first, then the user copy, then the admin copy.
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+**Project-local paths:**
+- `.opencode/skills/<name>/SKILL.md`
+- `.claude/skills/<name>/SKILL.md`
+- `.agents/skills/<name>/SKILL.md`
+
+**Global paths:**
+- `~/.config/opencode/skills/<name>/SKILL.md`
+- `~/.claude/skills/<name>/SKILL.md`
+- `~/.agents/skills/<name>/SKILL.md`
+
+OpenCode walks up from the current working directory to the git root, checking each level.
+
+</hfoption>
+
+<hfoption id="Pi">
+
+| Scope | Path |
+|-------|------|
+| Project | `.pi/skills/<name>/SKILL.md` |
+| Shared repo tree | `.agents/skills/<name>/SKILL.md` |
+| User | `~/.pi/agent/skills/<name>/SKILL.md` |
+| Shared user | `~/.agents/skills/<name>/SKILL.md` |
+
+Pi scans the Pi-specific paths plus the shared `.agents/skills/` tree, so the same skill can work in Pi and other harnesses without duplication.
+
+</hfoption>
+
+</hfoptions>
+
+## Installing a Skill
+
+We'll use the [hf-cli](https://github.com/huggingface/skills) skill as a real-world example. It gives agents access to the Hugging Face Hub CLI for downloading, uploading, and managing repositories.
+
+The Hugging Face CLI also provides a cross-agent skill installer. Use it when you want the same skill in more than one agent or want a shared install flow:
+
+```bash
+# Project-local install
+hf skills add
+
+# Agent-specific symlinks
+hf skills add --claude
+hf skills add --codex --opencode --global
+```
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+Skills are distributed as plugins via marketplaces. Inside a Claude Code session, add a marketplace, then install the plugin that contains the skill:
+
+```text
+/plugin marketplace add huggingface/skills
+/plugin install hf-cli@huggingface-skills
+```
+
+Use `/plugin` to browse, enable, and disable installed plugins. Plugin skills are namespaced as `/<plugin-name>:<skill-name>` (for example, `/hf-cli:download-model`) to prevent conflicts.
+
+</hfoption>
+
+<hfoption id="Codex">
+
+Use the built-in skill installer for curated skills:
+
+```text
+$skill-installer hf-cli
+```
+
+Or, you can install the entire Hugging Face plugin:
+
+```text
+/plugins
+```
+
+Then select 'Hugging Face' and click 'Install plugin'.
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+Create the skill directory in any supported location and add a `SKILL.md` file:
+
+```bash
+hf skills add
+```
+
+This will create the skill directory and add the `SKILL.md` file in `.agents/skills/hf-cli/SKILL.md`.
+
+OpenCode discovers it automatically.
+
+You can control which skills agents may use via `opencode.json`:
+
+```json
+{
+  "permission": {
+    "skill": {
+      "*": "allow",
+      "experimental-*": "ask"
+    }
+  }
+}
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+Pi discovers the shared `.agents/skills/` tree that `hf skills add` creates, so the simplest install flow is:
+
+```bash
+# Creates .agents/skills/hf-cli/SKILL.md
+hf skills add
+
+# Start Pi in the same repository
+pi
+```
+
+For one-off testing, you can also load a skill explicitly with `pi --skill /absolute/path/to/SKILL.md`.
+
+</hfoption>
+
+</hfoptions>
+
+## Invoking Skills
+
+Once installed, skills activate in two ways: implicitly (the agent matches your request to a skill's description) or explicitly (you invoke a skill by name).
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```text
+# Implicit — Claude matches your request to the skill description
+Download the latest version of meta-llama/Llama-4-Scout-17B-16E
+
+# Explicit — invoke a plugin skill by its namespaced name
+/hf-cli:download-model
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+```bash
+# Implicit — Codex selects based on task matching
+codex "Upload my model to the Hub"
+
+# Explicit — mention by name
+$hf-cli
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+Agents invoke skills via the native `skill` tool by passing the skill name. OpenCode matches tasks to skills automatically based on the description in frontmatter.
+
+</hfoption>
+
+<hfoption id="Pi">
+
+```text
+# Implicit — Pi selects based on task matching
+Upload my model to the Hub
+
+# Explicit — force the skill
+/skill:hf-cli Upload my model to the Hub
+```
+
+</hfoption>
+
+</hfoptions>
+
+## Troubleshooting Skills
+
+### Skill Doesn't Activate
+
+**Problem**: Skill is installed but the agent doesn't use it.
+
+Check that the `description` field includes keywords matching your request, use terms that align with the skill's stated purpose, or invoke the skill explicitly by name. A description like "Hugging Face Hub CLI for downloading, uploading, and managing repositories" activates on requests mentioning "upload," "download," or "Hugging Face," but a vague request like "push my files somewhere" may not match.
+
+## Did Your Skill Fire?
+
+The fastest way to debug a new skill is to test activation pressure directly:
+
+1. Ask for the skill with an obvious prompt that should match its description.
+2. Ask again with a vaguer prompt that a real user might write.
+3. If only the first prompt works, tighten the `description` until both prompts reliably activate the skill.
+
+For Codex, this is exactly where `$skill-creator` helps. Feed it the skill, the prompt that failed to activate, and the behavior you wanted so it can sharpen the description without rewriting the whole skill.
+
+### Skill Not Found
+
+**Problem**: Agent can't locate the skill.
+
+Verify the skill is in the correct directory for your agent:
+
+<hfoptions id="tool">
+
+<hfoption id="Claude Code">
+
+```bash
+ls .claude/skills/hf-cli/SKILL.md
+```
+
+Or check installed plugins inside a Claude Code session with:
+
+```text
+/plugin
+```
+
+</hfoption>
+
+<hfoption id="Codex">
+
+```bash
+ls .agents/skills/hf-cli/SKILL.md
+```
+
+</hfoption>
+
+<hfoption id="OpenCode">
+
+```bash
+ls .opencode/skills/hf-cli/SKILL.md
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+```bash
+ls .pi/skills/hf-cli/SKILL.md
+ls .agents/skills/hf-cli/SKILL.md
+```
+
+Pi loads either path, plus the user-level directories under `~/.pi/agent/skills/` and `~/.agents/skills/`.
+
+</hfoption>
+
+</hfoptions>
+
+### Skill Conflicts
+
+**Problem**: Multiple skills have overlapping functionality.
+
+Make each skill's `description` field specific enough that the agent can distinguish between them. If two skills cover related tasks (e.g., validation and publishing), give each a clear scope in its description.
+
+## Best Practices
+
+Organize skills by domain — keep related skills together so agents can discover related functionality easily:
+
+```bash
+.claude/skills/
+├── hf-cli/
+│   └── SKILL.md
+├── dataset-validation/
+│   └── SKILL.md
+├── model-training/
+│   └── SKILL.md
+└── model-evaluation/
+    └── SKILL.md
+```
+
+Keep each skill focused on one task. If a SKILL.md exceeds 500 lines, split it into multiple skills or move reference material to supporting files in the same directory.
+
+## Next Steps
+
+Next, we'll build a skill from scratch.
+
+
+## Building Your First Skill
+
+# Building Your First Skill
+
+In this lesson you'll build a **Hugging Face Dataset Validation Skill** from scratch: it checks dataset format and schema, flags common data quality issues, and prints a short report. By the end, you'll have a working skill that follows the Agent Skills Specification and runs locally with your agent.
+## Step 1: Create the Skill Directory Structure
+
+Let's set up a skill repository following the Agent Skills Specification:
+
+```bash
+# Create a directory for your skill
+mkdir hf-dataset-validation
+cd hf-dataset-validation
+
+# Create the directory structure per the specification
+mkdir -p scripts references assets
+
+# Create the main files
+touch SKILL.md .gitignore requirements.txt
+```
+
+Your directory now looks like:
+
+```
+hf-dataset-validation/
+├── SKILL.md              # Main skill file (required)
+├── requirements.txt      # Python dependencies
+├── .gitignore           # Git ignore rules
+├── scripts/             # Optional: helper scripts
+│   ├── validate_dataset.py
+│   └── generate_report.py
+├── references/          # Optional: documentation
+│   └── examples.md
+└── assets/              # Optional: templates
+    └── validation-template.txt
+```
+
+## Step 2: Write the SKILL.md File
+
+Create your main skill file with proper frontmatter and instructions:
+
+````markdown
+---
+name: "hf-dataset-validation"
+description: "Validate Hugging Face datasets for schema, format, and data quality issues. Use when checking datasets before publishing, training, or sharing."
+license: "MIT"
+compatibility: "Python 3.8+, requires pandas and datasets"
+metadata:
+  author: "your-username"
+  version: "1.0.0"
+  created: "2026-04-13"
+---
+
+# Dataset Validation Skill
+
+## Overview
+
+This skill teaches agents how to validate Hugging Face datasets for:
+- **Schema validation**: Correct columns and data types
+- **Data quality**: Missing values, duplicates, outliers
+- **Format compliance**: CSV, Parquet, Arrow, JSON formats
+- **Size checks**: File sizes, record counts, memory footprint
+
+Use this skill before publishing datasets or using them for training.
+
+## Prerequisites Checklist
+
+- [ ] Python 3.8 or higher installed
+- [ ] pandas library installed (`pip install pandas`)
+- [ ] datasets library installed (`pip install datasets`)
+- [ ] Dataset file accessible locally
+
+## Step-by-Step Guide
+
+### Step 1: Install Dependencies
+
+```bash
+pip install pandas datasets numpy
+```
+
+### Step 2: Check Dataset Format
+
+Identify what format your dataset is in:
+
+```python
+from pathlib import Path
+
+file_path = "data/my_dataset.csv"
+
+# Check file extension
+if file_path.endswith('.csv'):
+    print("Format: CSV")
+elif file_path.endswith('.parquet'):
+    print("Format: Parquet")
+elif file_path.endswith('.json'):
+    print("Format: JSON")
+else:
+    print("Unknown format")
+```
+
+### Step 3: Load and Inspect
+
+Load your dataset and check basic properties:
+
+```python
+
+# Load CSV dataset
+df = pd.read_csv("data/my_dataset.csv")
+
+# Check shape and columns
+print(f"Shape: {df.shape}")  # (rows, columns)
+print(f"Columns: {list(df.columns)}")
+print(f"Data types:\\n{df.dtypes}")
+```
+
+### Step 4: Validate Schema
+
+Check that your dataset has expected columns and correct data types:
+
+```python
+# Define expected schema
+expected_columns = {'text', 'label', 'split'}
+actual_columns = set(df.columns)
+
+# Check all required columns exist
+missing = expected_columns - actual_columns
+if missing:
+    print(f"ERROR: Missing columns: {missing}")
+
+# Check for unexpected columns
+extra = actual_columns - expected_columns
+if extra:
+    print(f"WARNING: Extra columns: {extra}")
+
+# Verify data types
+if df['label'].dtype not in ['int64', 'object']:
+    print("WARNING: label column should be integer or string")
+```
+
+### Step 5: Check Data Quality
+
+Identify common data quality issues:
+
+```python
+# Check for missing values
+missing_count = df.isna().sum()
+if missing_count.any():
+    print("Missing values found:")
+    print(missing_count[missing_count > 0])
+
+# Check for duplicates
+duplicates = df.duplicated().sum()
+if duplicates > 0:
+    print(f"WARNING: {duplicates} duplicate rows found")
+
+# Check for empty strings
+for col in df.select_dtypes(include='object').columns:
+    empty = (df[col].str.strip() == '').sum()
+    if empty > 0:
+        print(f"WARNING: Column '{col}' has {empty} empty strings")
+```
+
+### Step 6: Generate Validation Report
+
+Use the provided validation script (see references below):
+
+```bash
+python scripts/validate_dataset.py data/my_dataset.csv
+```
+
+The report includes:
+- Dataset summary (rows, columns, size)
+- Data quality metrics
+- Issues found and recommendations
+- Remediation suggestions
+
+## Common Issues and Solutions
+
+### Issue: Encoding Error Reading CSV
+
+**Problem**: `UnicodeDecodeError` when loading file
+
+**Solution**: Try different character encodings
+```python
+encodings = ['utf-8', 'latin-1', 'iso-8859-1']
+for encoding in encodings:
+    try:
+        df = pd.read_csv("file.csv", encoding=encoding)
+        print(f"Success with {encoding}")
+        break
+    except:
+        continue
+```
+
+### Issue: Memory Error with Large Files
+
+**Problem**: `MemoryError` when loading large CSV
+
+**Solution**: Read in chunks
+```python
+chunks = pd.read_csv("large_file.csv", chunksize=10000)
+for i, chunk in enumerate(chunks):
+    print(f"Processing chunk {i}...")
+    # Process each chunk
+```
+
+### Issue: Inconsistent Column Names
+
+**Problem**: Column names have mixed capitalization or spaces
+
+**Solution**: Standardize column names
+```python
+df.columns = df.columns.str.lower().str.replace(' ', '_')
+print(df.columns)
+```
+
+## Helper Scripts
+
+### scripts/validate_dataset.py
+
+```python
+#!/usr/bin/env python3
+"""Validate Hugging Face datasets."""
+
+from pathlib import Path
+
+def validate_csv(filepath):
+    """Validate a CSV dataset file."""
+    
+    errors = []
+    warnings = []
+    report = {
+        "filepath": filepath,
+        "format": "csv",
+        "errors": errors,
+        "warnings": warnings,
+        "metadata": {}
+    }
+    
+    # Check file exists
+    if not Path(filepath).exists():
+        errors.append(f"File not found: {filepath}")
+        return report
+    
+    try:
+        # Load file
+        df = pd.read_csv(filepath)
+        report["metadata"]["rows"] = len(df)
+        report["metadata"]["columns"] = list(df.columns)
+        report["metadata"]["dtypes"] = {k: str(v) for k, v in df.dtypes.items()}
+        
+        # Check for missing values
+        missing = df.isna().sum()
+        if missing.any():
+            report["metadata"]["missing_values"] = missing.to_dict()
+        
+        # Check for duplicates
+        dup_count = df.duplicated().sum()
+        if dup_count > 0:
+            warnings.append(f"Found {dup_count} duplicate rows")
+        
+        # Check for empty strings
+        for col in df.select_dtypes(include='object').columns:
+            empty = (df[col].str.strip() == '').sum()
+            if empty > 0:
+                warnings.append(f"Column '{col}' has {empty} empty strings")
+        
+    except Exception as e:
+        errors.append(f"Error reading file: {str(e)}")
+    
+    return report
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python validate_dataset.py <filepath>")
+        sys.exit(1)
+    
+    filepath = sys.argv[1]
+    report = validate_csv(filepath)
+    print(json.dumps(report, indent=2))
+    
+    if report["errors"]:
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+```
+
+### scripts/generate_report.py
+
+```python
+#!/usr/bin/env python3
+"""Generate a human-readable validation report."""
+
+from pathlib import Path
+
+def generate_report(filepath):
+    """Generate a text report for a dataset."""
+    
+    report = []
+    report.append("=" * 60)
+    report.append("DATASET VALIDATION REPORT")
+    report.append("=" * 60)
+    report.append(f"\nFile: {filepath}\n")
+    
+    if not Path(filepath).exists():
+        report.append(f"ERROR: File not found: {filepath}")
+        return "\n".join(report)
+    
+    try:
+        df = pd.read_csv(filepath)
+    except Exception as e:
+        report.append(f"ERROR: Could not read file: {e}")
+        return "\n".join(report)
+    
+    # Basic stats
+    report.append("BASIC STATISTICS")
+    report.append(f"  Rows: {len(df)}")
+    report.append(f"  Columns: {len(df.columns)}")
+    report.append(f"  Memory: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+    
+    # Column info
+    report.append("\nCOLUMN INFORMATION")
+    for col in df.columns:
+        dtype = df[col].dtype
+        non_null = df[col].notna().sum()
+        report.append(f"  {col}: {dtype} ({non_null}/{len(df)} non-null)")
+    
+    # Data quality
+    report.append("\nDATA QUALITY")
+    missing = df.isna().sum().sum()
+    report.append(f"  Missing values: {missing}")
+    duplicates = df.duplicated().sum()
+    report.append(f"  Duplicate rows: {duplicates}")
+    
+    # Recommendations
+    report.append("\nRECOMMENDATIONS")
+    if missing > 0:
+        report.append("  - Handle missing values (drop or impute)")
+    if duplicates > 0:
+        report.append("  - Remove duplicate rows")
+    report.append("  - Document dataset and preprocessing steps")
+    report.append("  - Add LICENSE and README.md files")
+    
+    report.append("\n" + "=" * 60)
+    return "\n".join(report)
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python generate_report.py <filepath>")
+        sys.exit(1)
+    
+    filepath = sys.argv[1]
+    print(generate_report(filepath))
+
+if __name__ == "__main__":
+    main()
+```
+````
+
+## Step 3: Add Documentation
+
+Create references/ directory with examples:
+
+**references/examples.md**
+````markdown
+# Usage Examples
+
+## Validate a CSV file
+```bash
+python scripts/validate_dataset.py data/my_dataset.csv
+```
+
+Output:
+```json
+{
+  "filepath": "data/my_dataset.csv",
+  "format": "csv",
+  "errors": [],
+  "warnings": ["Found 2 duplicate rows"],
+  "metadata": {
+    "rows": 1000,
+    "columns": ["text", "label", "split"],
+    "missing_values": {"text": 0}
+  }
+}
+```
+
+## Validate in Python
+```python
+from pathlib import Path
+
+sys.path.insert(0, "scripts")
+from validate_dataset import validate_csv
+
+report = validate_csv("data/my_dataset.csv")
+print(report)
+```
+````
+
+## Step 4: Create requirements.txt
+
+List your dependencies:
+
+```
+pandas>=1.3.0
+datasets>=2.0.0
+numpy>=1.20.0
+```
+
+## Step 5: Test Your Skill
+
+Before you rely on it in real work, test it thoroughly:
+
+```bash
+# Create test data
+mkdir -p test_data
+cat > test_data/sample.csv << 'EOF'
+text,label,split
+Hello world,0,train
+Great job,1,train
+This is bad,0,test
+EOF
+
+# Test validation script
+python scripts/validate_dataset.py test_data/sample.csv
+
+# Test report generation
+python scripts/generate_report.py test_data/sample.csv
+```
+
+Expected output shows:
+- Number of rows and columns
+- Data types
+- Missing values (if any)
+- Duplicate rows (if any)
+- Quality recommendations
+
+## Step 6: Optional Version Control Hygiene
+
+This part is not specific to skills, but it is worth doing if you plan to keep iterating on the skill or share it with others:
+
+```bash
+git init
+git add .
+git commit -m "Initial dataset validation skill"
+```
+
+Treat the skill directory like any other small software project: keep a `.gitignore`, add a `LICENSE` when you're ready to publish, and use version control so instruction changes are easy to review.
+
+## Step 7: Test with Your Agent
+
+For local iteration, symlink the skill into your agent's skills directory so edits take effect immediately. Copying still works, but symlinks make mid-session iteration much easier.
+
+> [!NOTE]
+> The commands below use Unix-style symlinks (`ln -s`). On Windows, either copy the skill directory instead or create a directory symlink in PowerShell with `New-Item -ItemType SymbolicLink -Path <destination> -Target <source>`.
+
+<hfoptions id="tool">
+<hfoption id="Claude Code">
+
+```bash
+# Create a test project
+mkdir my_project
+cd my_project
+
+# Symlink the skill into the project's skills directory
+mkdir -p .claude/skills
+ln -s /absolute/path/to/hf-dataset-validation .claude/skills/hf-dataset-validation
+
+# Start Claude Code — it discovers skills automatically
+claude
+
+# At the prompt:
+# "Validate my dataset at test_data/sample.csv"
+```
+
+</hfoption>
+<hfoption id="Codex">
+
+```bash
+# Create a test project
+mkdir my_project
+cd my_project
+
+# Symlink the skill into the repo-scoped skills directory
+mkdir -p .agents/skills
+ln -s /absolute/path/to/hf-dataset-validation .agents/skills/hf-dataset-validation
+
+# Start Codex
+codex
+
+# At the prompt:
+# "Validate my dataset at test_data/sample.csv"
+```
+
+</hfoption>
+<hfoption id="OpenCode">
+
+```bash
+# Create a test project
+mkdir my_project
+cd my_project
+
+# Symlink the skill into the project-local skills directory
+mkdir -p .opencode/skills
+ln -s /absolute/path/to/hf-dataset-validation .opencode/skills/hf-dataset-validation
+
+# Start OpenCode
+opencode
+
+# At the prompt:
+# "Validate my dataset at test_data/sample.csv"
+```
+
+</hfoption>
+<hfoption id="Pi">
+
+```bash
+# Create a test project
+mkdir my_project
+cd my_project
+
+# Symlink the skill into the project-local Pi skills directory
+mkdir -p .pi/skills
+ln -s /absolute/path/to/hf-dataset-validation .pi/skills/hf-dataset-validation
+
+# Start Pi
+pi
+
+# At the prompt:
+# "Validate my dataset at test_data/sample.csv"
+```
+
+</hfoption>
+</hfoptions>
+
+Your agent should:
+1. Discover the skill in the local skills directory
+2. Match the task to the skill's description
+3. Load the SKILL.md instructions into context
+4. Execute helper scripts as needed
+
+## Step 8: Debug Activation and Tighten the Description
+
+Now test whether the skill fires reliably:
+
+```text
+Prompt 1: "Validate my dataset at test_data/sample.csv before I use it for training."
+Prompt 2: "Can you check whether this CSV is ready to share?"
+```
+
+If Prompt 1 works but Prompt 2 does not, your `description` is still too narrow. Tighten it until both prompts activate the skill.
+
+This is the point where Codex's `$skill-creator` is useful: give it the skill plus a missed prompt and have it rewrite only the triggering description. On Claude Code and OpenCode, do the same revision loop manually by editing the frontmatter, then test again in the same project.
+
+## Next Steps
+
+You now have a working skill. As you use it, keep revising the description and helper scripts so the skill stays sharp.
+
+
+## Quiz 2: Building and Using Skills
+
+# Quiz 2: Building and Using Skills
+
+Test your understanding of how to build, test, and use skills following the Agent Skills Specification. Answer all 5 questions.
+
+## Question 1: Skill Directory Structure
+
+You're building a dataset validation skill. What should your directory structure look like according to the Agent Skills Specification?
+
+<Question
+choices={[
+  {
+    text: "Just a single SKILL.md file in your project root",
+    explain: "While technically possible, this doesn't follow the specification. The spec defines a structured layout with optional scripts/, references/, and assets/ directories for organization and clarity.",
+    correct: false
+  },
+  {
+    text: "SKILL.md in root, scripts/ for helper code, references/ for documentation, assets/ for templates",
+    explain: "Correct! This follows the Agent Skills Specification exactly. SKILL.md is required at the root; scripts/, references/, and assets/ are optional but recommended for organization.",
+    correct: true
+  },
+  {
+    text: "Everything in a scripts/ folder with SKILL.md inside it",
+    explain: "No, SKILL.md must be at the root so agents can discover it immediately. Helper scripts go in scripts/ but the main file is at the root.",
+    correct: false
+  },
+  {
+    text: "Organize folders by agent type (claude/, codex/, opencode/)",
+    explain: "No, the specification is agent-agnostic. Skills use a single format that works across all supporting agents. No agent-specific organization is needed.",
+    correct: false
+  }
+]}
+/>
+
+## Question 2: Required Frontmatter Fields
+
+What are the only required frontmatter fields in a SKILL.md file according to the Agent Skills Specification?
+
+<Question
+choices={[
+  {
+    text: "name, description, version, and license",
+    explain: "While useful, version and license are optional. Only two fields are required: name and description. These ensure agents can discover and understand the skill.",
+    correct: false
+  },
+  {
+    text: "name and description",
+    explain: "Correct! The specification requires exactly these two fields. Name identifies the skill; description explains what it does and when to use it. All other fields are optional.",
+    correct: true
+  },
+  {
+    text: "All metadata fields (name, version, author, etc.)",
+    explain: "No, many metadata fields are optional. Only name and description are required by the specification.",
+    correct: false
+  },
+  {
+    text: "At least 5 fields including metadata and compatibility",
+    explain: "No, the spec is minimal. Only name and description are required. Other fields like license, compatibility, and metadata are optional.",
+    correct: false
+  }
+]}
+/>
+
+## Question 3: Validating Your Skill Locally
+
+After building your skill locally, what's the best next step to validate it?
+
+<Question
+choices={[
+  {
+    text: "Symlink it into your agent's skill directory, start the agent, and test with realistic prompts",
+    explain: "Correct! The first thing that matters is whether the agent can discover and activate the skill in a real workflow. Local install plus realistic prompts catches trigger and usability problems early.",
+    correct: true
+  },
+  {
+    text: "Wait until the skill is shared more broadly before you test it with an agent",
+    explain: "No. Validate the skill locally first so you can fix activation issues, missing files, and weak instructions before anyone else depends on it.",
+    correct: false
+  },
+  {
+    text: "Run only the helper scripts and skip agent testing",
+    explain: "Helper scripts matter, but they are not enough. A skill can have correct scripts and still fail because the description doesn't trigger or the instructions are unclear.",
+    correct: false
+  },
+  {
+    text: "Read the SKILL.md manually and assume the agent will behave the same way",
+    explain: "No. Manual review helps, but the real test is whether the agent discovers and uses the skill correctly inside a live session.",
+    correct: false
+  }
+]}
+/>
+
+## Question 4: Helper Scripts vs. Instructions
+
+How should you divide content between SKILL.md instructions and helper scripts?
+
+<Question
+choices={[
+  {
+    text: "Instructions contain all executable code; scripts are just for reference examples",
+    explain: "No, it's the opposite. Instructions teach the strategy and steps; scripts contain actual, executable code agents run.",
+    correct: false
+  },
+  {
+    text: "Instructions explain what to do and why; scripts contain runnable code agents can actually execute",
+    explain: "Exactly right! Instructions provide strategy and guidance; scripts provide implementation. This separation makes skills teach and executable.",
+    correct: true
+  },
+  {
+    text: "Everything goes in scripts; instructions are summaries of script functions",
+    explain: "No, instructions are critical for teaching. Without clear instructions, users don't understand when, why, or how to use the scripts.",
+    correct: false
+  },
+  {
+    text: "It depends on the skill; the specification doesn't define this",
+    explain: "The specification and best practices do define this: instructions teach, scripts implement. This pattern is standard across skills.",
+    correct: false
+  }
+]}
+/>
+
+## Question 5: Activation Debugging
+
+When a skill doesn't activate reliably, what should you do first?
+
+<Question
+choices={[
+  {
+    text: "Add more helper scripts immediately, even if the trigger description is vague",
+    explain: "No. If the agent isn't activating the skill, the first problem is usually the triggering description or the examples, not missing helper code.",
+    correct: false
+  },
+  {
+    text: "Tighten the description and retest with both obvious and vague prompts",
+    explain: "Correct! Reliable activation comes from a clear description plus realistic prompt testing. Fix the trigger before adding more complexity.",
+    correct: true
+  },
+  {
+    text: "Rename the skill folder without changing the description",
+    explain: "No. Folder names matter for organization, but activation usually depends on the description and examples the agent matches against.",
+    correct: false
+  },
+  {
+    text: "Turn the skill back into a long one-off prompt for every conversation",
+    explain: "No. That throws away the reuse and progressive disclosure benefits skills are meant to provide.",
+    correct: false
+  }
+]}
+/>
+
+---
+
+## Scoring
+
+Count your correct answers:
+- **5/5**: Excellent! You understand skill development and the Agent Skills Specification. You're ready to build skills.
+- **4/5**: Good understanding. Review the question you missed before moving forward.
+- **3/5 or less**: Review the building and usage lessons before proceeding.
+
+## Summary
+
+You've completed Quiz 2! You now understand:
+- How to organize skills following the Agent Skills Specification
+- Which frontmatter fields are required vs. optional
+- How to validate a skill locally with a real agent
+- How to divide content between instructions and executable scripts
+- How to debug activation when a skill doesn't fire
+
+These are the core skills for building and maintaining quality agent skills.
+
+## Next Steps
+
+You've completed Unit 1: Agent Skills! You can now:
+- Build skills following the Agent Skills Specification
+- Use skills with Claude Code, Codex, and other agents
+- Validate skills in a real project
+- Write clear instructions and helper scripts
+
+Next, we move to **Unit 2: Model Context Protocol (MCP)**, where you'll learn how to integrate external tools and APIs with your code agents.
+
+Ready to dive into MCPs?

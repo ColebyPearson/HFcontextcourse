@@ -1,0 +1,1795 @@
+# 4. Subagents: Orchestrating Multi-Agent Workflows
+
+
+## Unit 4: Subagents
+
+# Unit 4: Subagents
+
+Subagents are isolated agent instances spawned by a parent agent to handle subtasks, often in parallel. Each has its own context window, execution limits, and tool access, and reports back to the parent.
+
+```
+Parent Agent (Main Task)
+    │
+    ├─→ Subagent 1 (Subtask A) — Separate context, separate tools
+    ├─→ Subagent 2 (Subtask B) — Separate context, separate tools
+    └─→ Subagent 3 (Subtask C) — Separate context, separate tools
+    
+    Wait for all → Aggregate results → Final answer
+```
+
+## Why Single-Agent Workflows Hit Limits
+
+A single agent runs into the same handful of problems every time. Large tasks overflow its context window. Work runs sequentially even when it could be parallel. An agent expected to be expert in everything dilutes its focus. Unrelated tasks interfere with each other in the same reasoning chain. And a single failure takes down the whole workflow, because there's no isolation. Subagents address all of these.
+
+## The 5 Use Cases for Subagents
+
+There are 5 clear signals that subagents are the right approach:
+
+### 1. Research-Heavy Tasks
+When you need to read 10+ files or documents:
+```
+Parent: "Summarize our architecture"
+├─ Subagent A: Read and summarize backend docs (50 files)
+├─ Subagent B: Read and summarize frontend docs (40 files)
+└─ Subagent C: Read and summarize database docs (30 files)
+Parent: Combine summaries into architecture overview
+```
+
+### 2. Multiple Independent Tasks
+When you have 3+ pieces of work that don't depend on each other:
+```
+Parent: "Prepare launch report"
+├─ Subagent A: Gather sales metrics (2 hours of API calls)
+├─ Subagent B: Compile feature list from GitHub (1 hour)
+└─ Subagent C: Collect user feedback from surveys (1 hour)
+Parent: Aggregate into one report
+```
+
+A single agent would take 4 hours. Subagents: ~2 hours (parallel execution).
+
+### 3. Fresh Perspective Verification
+When you need unbiased review or independent verification:
+```
+Parent: "Implement payment system"
+├─ Subagent A: Implement feature
+└─ Subagent B (read-only): Review implementation for bugs
+```
+
+The verification subagent has no memory of implementation choices, so it spots gaps.
+
+### 4. Pre-Commit Verification
+When you want independent validation before merging:
+```
+Parent: "Propose code changes"
+├─ Subagent A: Write code
+└─ Subagent B (read-only): Security review before commit
+```
+
+Prevents bad code from reaching the repository.
+
+### 5. Pipeline Workflows
+When tasks have clear sequential stages:
+```
+Parent orchestrates:
+├─ Design Stage
+│  └─ Subagent: Design API schema
+├─ Implementation Stage
+│  └─ Subagent: Write code (using design from stage 1)
+└─ Testing Stage
+   └─ Subagent: Test code (using code from stage 2)
+```
+
+Clear separation of concerns, easy to track progress. 
+
+A single agent could handle these stages sequentially, but subagents give each stage an isolated context window. The testing subagent receives only the finished code, not the full history of design discussions and implementation decisions that built up in the parent's context. This keeps each stage focused and prevents context bloat from degrading output quality on longer pipelines. It also allows the subagent to be more nit-picky and critical of the work the previous agent did and ensures outputs are as robust as possible.
+
+## The Strong Signal: "10+ Files"
+
+A strong signal to determine whether you need to use subagents in your workflow is if you find yourself thinking something along the lines of:
+- "I need to read 10+ files to understand this"
+- "I'm doing 3+ independent pieces of work"
+- "I want a second opinion on this"
+
+## Subagent Benefits
+
+Subagents enable parallel execution across multiple tasks simultaneously, give each task its own context window to prevent overflow, allow specialized tool access per agent, isolate failures so one crash doesn't take down the whole workflow, scale without slowing the parent, and decompose complexity naturally into manageable pieces.
+
+## When NOT to Use Subagents
+
+Avoid subagents for sequential dependent work where task B needs output from task A, same-file parallel edits that risk git conflicts, small quick tasks where spawn overhead exceeds the task itself, and workflows requiring more than five specialist agents where coordination becomes chaotic.
+
+## What You'll Learn
+
+This unit covers subagent patterns (fan-out/fan-in, pipeline, supervisor, swarm), the signals that tell you a task needs subagents, how to invoke them in Claude Code and Codex, and a hands-on research–implement–review pipeline.
+
+
+## Subagent Patterns
+
+# Subagent Patterns
+
+Multi-agent workflows tend to fall into a handful of shapes. We will go over 4 of them that cover almost anything you would build.
+
+<iframe
+    src="https://context-course-subagent-patterns.static.hf.space"
+    frameborder="0"
+    width="850"
+    height="450"
+></iframe>
+
+## Pattern 1: Fan-Out / Fan-In
+
+**What it is:** Spawn multiple subagents in parallel for independent subtasks, then aggregate results.
+
+**When to use:** Independent tasks with no dependencies between them.
+
+**Example:** Evaluate 5 models on the same benchmark.
+
+```
+Parent: "Compare models"
+├─ Subagent 1: Evaluate Model A → Score: 92%
+├─ Subagent 2: Evaluate Model B → Score: 89%
+├─ Subagent 3: Evaluate Model C → Score: 94%
+├─ Subagent 4: Evaluate Model D → Score: 88%
+└─ Subagent 5: Evaluate Model E → Score: 91%
+
+Parent: Aggregate → Ranking report
+```
+
+**Pseudocode:**
+```text
+parent_agent:
+    subagents = []
+    for model in [A, B, C, D, E]:
+        subagent = spawn(
+            task=f"Evaluate {model}",
+            context={model}
+        )
+        subagents.append(subagent)
+    
+    results = wait_all(subagents)
+    report = aggregate(results)
+    return report
+```
+
+**Pros:** Fully parallel, max speed, easy to scale
+
+**Cons:** Total time = slowest subagent
+
+## Pattern 2: Pipeline
+
+**What it is:** Chain subagents where output of one becomes input to the next.
+
+**When to use:** Sequential processing with data flowing through stages.
+
+**Example:** Data processing: extract → clean → analyze → report
+
+```
+Raw Data
+  ↓
+[Subagent 1: Extract]
+  ↓
+Extracted Data
+  ↓
+[Subagent 2: Clean]
+  ↓
+Clean Data
+  ↓
+[Subagent 3: Analyze]
+  ↓
+Results
+  ↓
+[Subagent 4: Report]
+  ↓
+Final Report
+```
+
+**Pseudocode:**
+```text
+parent_agent:
+    data = load_raw_data()
+    
+    extracted = spawn(task="Extract", input=data).wait()
+    cleaned = spawn(task="Clean", input=extracted).wait()
+    analyzed = spawn(task="Analyze", input=cleaned).wait()
+    report = spawn(task="Report", input=analyzed).wait()
+    
+    return report
+```
+
+**Pros:** Clear stages, easy to track progress, failures are local
+
+**Cons:** No parallelism—each stage waits for previous
+
+## Pattern 3: Supervisor (Hierarchical)
+
+**What it is:** Parent agent directs multiple specialized subagents, each with different tools and expertise.
+
+**When to use:** Complex tasks requiring multiple specialist agents.
+
+**Example:** Product launch report needs sales, engineering, and marketing data.
+
+```
+Parent Agent (Orchestrator)
+├─ Sales Subagent (has: CRM tools, revenue metrics)
+├─ Engineering Subagent (has: GitHub API, deployment tools)
+└─ Marketing Subagent (has: analytics, social tools)
+
+Parent aggregates → Launch Report
+```
+
+**Pseudocode:**
+```text
+parent_agent:
+    sales = spawn(
+        task="Get sales metrics",
+        tools=[crm, revenue_db]
+    )
+    engineering = spawn(
+        task="Get feature status",
+        tools=[github, ci_cd]
+    )
+    marketing = spawn(
+        task="Get market sentiment",
+        tools=[analytics, social]
+    )
+    
+    results = wait_all([sales, engineering, marketing])
+    report = combine(results)
+    return report
+```
+
+**Pros:** Specialized agents, clean separation of tools, parallel execution
+
+**Cons:** More complex coordination
+
+## Pattern 4: Swarm (Collaborative)
+
+**What it is:** Multiple subagents work on the same problem, comparing approaches and converging on best solution.
+
+**When to use:** Complex problems where multiple perspectives improve quality.
+
+**Example:** Design review with architect, security, and performance subagents.
+
+```
+Parent: "Design new API"
+├─ Subagent 1 (Architect): Review structure
+├─ Subagent 2 (Security): Review for vulnerabilities
+├─ Subagent 3 (Performance): Review for bottlenecks
+
+Parent: Incorporate feedback → Final design
+```
+
+**Pseudocode:**
+```text
+parent_agent:
+    design = "Initial API design..."
+    
+    # Round 1: Independent reviews
+    architect_review = spawn(task=f"Review design as architect", input=design).wait()
+    security_review = spawn(task=f"Review design for security", input=design).wait()
+    perf_review = spawn(task=f"Review design for performance", input=design).wait()
+    
+    # Incorporate feedback
+    improved_design = combine(design, architect_review, security_review, perf_review)
+    
+    return improved_design
+```
+
+**Pros:** Multiple perspectives improve quality, catches blind spots
+
+**Cons:** Can be slow (requires multiple rounds)
+
+## Pattern Comparison
+
+| Pattern | Use Case | Parallelism | Coordination |
+|---------|----------|-------------|--------------|
+| **Fan-Out/Fan-In** | Independent tasks | High | Low |
+| **Pipeline** | Sequential stages | None | Medium |
+| **Supervisor** | Multiple specialists | Medium-High | Medium-High |
+| **Swarm** | Collaborative design | Low-Medium | High |
+
+## When NOT to Use Subagents
+
+We covered the high-level guidance in the unit introduction. Here's how it plays out in practice with code examples.
+
+### 1. Sequential Dependent Work
+```text
+# DON'T do this
+subagent_a = spawn(task="Step 1: Set up environment").wait()
+subagent_b = spawn(task="Step 2: Deploy code", input=subagent_a).wait()
+
+# BETTER: Single agent for sequential work
+single_agent(task="Set up environment, then deploy")
+```
+
+### 2. Same-File Parallel Edits
+```text
+# DON'T do this
+subagent_a = spawn(task="Add feature A to app.py")
+subagent_b = spawn(task="Add feature B to app.py")  # Conflict!
+
+# BETTER: Fan-out on different files
+subagent_a = spawn(task="Write feature A in feature_a.py")
+subagent_b = spawn(task="Write feature B in feature_b.py")
+```
+
+### 3. Small Quick Tasks
+```text
+# DON'T do this for simple tasks
+subagent = spawn(task="Format this JSON")  # Overhead: 1-2s, task: 0.1s
+
+# BETTER: Do it in parent
+formatted = json.dumps(data)
+```
+
+### 4. Too Many Specialist Agents
+```text
+# DON'T do this
+for i in range(20):  # 20 specialist subagents
+    subagent = spawn(task=f"Specialist {i} task")
+
+# BETTER: Group specialists
+senior_architect = spawn(task="Lead architecture design")
+implementation_team = spawn(task="Implement based on design")
+```
+
+## Key Takeaways
+
+Fan-out/fan-in parallelises independent work, pipeline chains stages, supervisor coordinates specialists, and swarm cross-reviews a single artefact. Reach for subagents when you have many files or several independent tasks; stick with a single agent for small jobs and tightly coupled workflows.
+
+Next, how to actually invoke subagents in Claude Code and Codex.
+
+
+## Using Subagents
+
+# Using Subagents
+
+The approach differs between Claude Code, Codex, and Pi, but the core idea is the same: a parent agent delegates a scoped task to a child, often in parallel.
+
+![Fan-out fan-in pattern where a parent agent spawns parallel subagents](https://huggingface.co/datasets/mcp-course/images/resolve/main/unit4/fan-out-fan-in.svg)
+
+## Invoking Subagents
+
+<hfoptions id="tool">
+<hfoption id="Claude Code">
+
+### Conversational Invocation
+
+The simplest way to use subagents in Claude Code is conversational:
+
+```
+I need to compare 5 ML frameworks. Use subagents to research each one in parallel.
+For each framework, find:
+  - GitHub metrics (stars, contributors)
+  - Download popularity (PyPI, npm)
+  - Community sentiment (GitHub discussions)
+```
+
+Claude Code automatically recognizes this as work suitable for subagents and:
+1. Spawns 5 parallel subagents
+2. Each researches one framework
+3. Aggregates results into comparison report
+
+Claude handles the subagent logic behind the scenes.
+
+### Custom Agents
+
+For more control, define custom agents in `.claude/agents/*.md` with YAML frontmatter:
+
+```markdown
+---
+name: researcher
+description: Research-focused agent for deep file exploration
+tools: Read, Grep, Glob, WebFetch
+model: sonnet
+---
+You are an expert researcher. Your job is to thoroughly explore files,
+extract key information, and provide well-sourced insights.
+```
+
+Invoke it explicitly:
+
+```
+Use the researcher subagent to explore our auth system and report on security practices.
+```
+
+Claude Code launches the `researcher` subagent with the specified tools and system prompt.
+
+**Multiple custom agents:**
+
+```markdown
+<!-- architect.md -->
+---
+name: architect
+description: System design specialist
+tools: Read, Glob
+model: sonnet
+---
+You design systems. You think about scalability, reliability, and maintainability.
+
+<!-- security-reviewer.md -->
+---
+name: security-reviewer
+description: Security-focused code reviewer
+tools: Read, Grep
+model: sonnet
+---
+You are a security expert. Review code for vulnerabilities.
+```
+
+Use them:
+
+```
+Have the architect review our system and the security-reviewer check for vulnerabilities.
+```
+
+### CLAUDE.md Policies
+
+Define reusable policies in `.claude/CLAUDE.md` for when subagents should be used:
+
+```markdown
+# Project Guidelines
+
+## Code Review Policy
+
+All code reviews use a read-only security-reviewer subagent:
+
+When a user proposes a change to core auth/ or security/ code, automatically:
+1. Spawn a read-only security-reviewer subagent
+2. Give it Read and Grep access (no Write)
+3. Have it review for vulnerabilities
+4. Report findings to user before commit
+
+## Research Policy
+
+Research tasks (10+ files) always use subagents to explore independently.
+Each subagent focuses on one subsystem to avoid context overflow.
+```
+
+Claude Code can use these policies as guidance. They make delegation more consistent, but explicit requests are still the strongest signal when you need a specific subagent to run.
+
+### Skills in Subagents
+
+You can invoke skills directly in subagent tasks:
+
+```
+Use a subagent to run the "hf-api-search" skill to find all BERT models
+```
+
+Or define which subagent should run which skill:
+
+```yaml
+---
+name: hf-researcher
+description: Hugging Face specialist
+skills: 
+	- hf-api-search 
+	- hf-dataset-fetch
+model: sonnet
+---
+You are an expert at finding and evaluating models on Hugging Face.
+```
+
+### Hooks and Lifecycle Events
+
+Claude Code supports hooks via `hooks.json` format (see code.claude.com/docs/en/hooks). Hooks can trigger commands on events like `PostToolUse`, but **automatic subagent spawning from hooks is not a built-in feature**.
+
+Instead, define **CLAUDE.md policies** to guide when Claude should use subagents:
+
+**`.claude/CLAUDE.md`:**
+
+```markdown
+# Project Guidelines
+
+## Code Review Policy
+
+When proposing changes to core auth/ or security/ code:
+- Use a read-only security-reviewer subagent
+- Have it check for SQL injection, token leakage, privilege escalation
+- Report findings before committing
+
+## Testing Policy
+
+Large test suites (10+ files):
+- Use a worker subagent to run tests in parallel
+- Report coverage and failures
+- Recommend fixes before commit
+```
+
+Claude Code reads these policies as guidance and can use subagents when appropriate. This is more flexible than rigid hooks, but it is still guidance rather than a guaranteed trigger. When you need a specific subagent, ask for it explicitly.
+
+### Background Execution (Ctrl+B)
+
+When a subagent task is running, press **Ctrl+B** to send it to the background:
+
+```
+Researching 10 files...  [Press Ctrl+B]
+✓ Sent to background. You can continue working.
+```
+
+Check running tasks:
+
+```text
+/tasks
+```
+
+The `/tasks` view lists active background tasks and lets you bring a selected task back to the foreground.
+
+### Subagent Results
+
+Subagents report back with:
+- Structured findings
+- Source files and line numbers
+- Confidence levels
+- Recommendations for parent agent
+
+Parent agent uses these results to:
+- Combine findings
+- Make decisions
+- Generate final output
+- Handle conflicts or contradictions
+
+### Example: Research + Review Pipeline
+
+```
+Main task: "Design a new authentication system for our app"
+
+Claude Code automatically:
+1. [Spawns researcher subagent]
+   Task: "Explore our current auth system in 15+ files"
+   Tools: Read, Grep, Glob
+   Result: Current architecture, pain points
+   
+2. [Spawns architect subagent]
+   Task: "Design new auth using research from step 1"
+   Tools: Read (no Write)
+   Result: Proposed design
+   
+3. [Spawns security-reviewer subagent]
+   Task: "Review proposed design for security issues"
+   Tools: Read (read-only)
+   Result: Vulnerability report, recommendations
+   
+4. [Parent combines]
+   Input: Research, design, security review
+   Output: Final design proposal with risks noted
+```
+
+### Best Practices in Claude Code
+
+Start with conversational invocation — let Claude decide when subagents help. Define custom agents for specialist roles like security-reviewer or performance-tester. Use read-only tools for review agents to prevent accidental writes. Leverage CLAUDE.md policies for consistent rules across your team, monitor background tasks with `/tasks`, and let the parent agent resolve conflicts when subagents disagree.
+
+</hfoption>
+<hfoption id="Codex">
+
+### Spawning Subagents in Codex
+
+Codex creates subagents **only when explicitly requested** via natural language. There is no separate `codex-agent` binary or CLI commands.
+
+Request subagent spawning naturally:
+
+```
+Spawn one agent per point in this list.
+Have pr_explorer map the affected code paths.
+Use the default agent to research the API.
+```
+
+Codex recognizes the request and spawns appropriate agents automatically.
+
+### Built-in Agent Types
+
+Codex provides **3 default agent types**:
+
+1. **default** — General-purpose fallback agent
+2. **worker** — Execution-focused, optimized for implementation and fixes
+3. **explorer** — Read-heavy, optimized for codebase exploration
+
+### Global Configuration
+
+Configure subagent behavior in your Codex config under `[agents]`:
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `max_threads` | 6 | Maximum concurrent open agent threads |
+| `max_depth` | 1 | Maximum nesting depth for spawned agents |
+| `job_max_runtime_seconds` | 1800 | Timeout per worker for batch jobs |
+
+Example `codex.toml`:
+```toml
+[agents]
+max_threads = 8
+max_depth = 1
+job_max_runtime_seconds = 3600
+```
+
+### Managing Subagents
+
+Use the `/agent` command to list active subagent threads and switch between them. Once attached to a thread, steer it in natural language:
+
+```text
+/agent
+```
+
+```
+Tell this agent to also check security.
+Stop the current agent.
+Close this agent and report findings.
+```
+
+### Custom Agent Types
+
+Define custom agents in `~/.codex/agents/` (user) or `.codex/agents/` (project) as TOML files:
+
+**`.codex/agents/pr_explorer.toml`:**
+```toml
+name = "pr_explorer"
+description = "Maps codebase and gathers evidence for PR reviews"
+developer_instructions = """
+You are a read-only codebase explorer. Map code paths affected by a PR,
+identify dependencies, and gather evidence about what changed and why.
+"""
+
+nickname_candidates = ["Atlas", "Delta", "Echo"]
+sandbox_mode = "read-only"
+```
+
+**`.codex/agents/docs_researcher.toml`:**
+```toml
+name = "docs_researcher"
+description = "Verifies APIs and framework behavior via MCP docs server"
+developer_instructions = """
+You verify that code uses APIs correctly. Check documentation,
+look for deprecations, and verify the framework behavior described in code.
+"""
+
+sandbox_mode = "read-only"
+mcp_servers = ["mcp://docs.framework.org"]
+```
+
+Required fields:
+- `name` — Agent identifier
+- `description` — What the agent does
+- `developer_instructions` — System prompt
+
+Optional fields:
+- `nickname_candidates` — Suggested friendly names
+- `model` — Override model selection
+- `sandbox_mode` — `read-only` for safe review agents
+- `mcp_servers` — Specialized tools and APIs
+- `skills.config` — Custom skill configurations
+
+### Sandbox and Approval Inheritance
+
+Subagents inherit the parent session's sandbox configuration:
+
+```
+Parent: "Review this code for security. Spawn a security-reviewer."
+→ security-reviewer automatically inherits parent's read-only mode
+
+Parent: "Find and fix all bugs." (with --yolo flag)
+→ Worker agents inherit full permissions
+```
+
+Approval requests from inactive threads surface to the parent. Parent session overrides (sandbox mode, `--yolo`) reapply to children.
+
+### CSV Batch Processing
+
+Process CSV files with parallel worker agents:
+
+```
+Process this CSV with one agent per row. 
+Column "model_name" should be evaluated on "benchmark".
+Save results to output.csv.
+```
+
+Codex uses the `spawn_agents_on_csv` tool with:
+- **csv_path** — Input CSV file
+- **instruction** — Task template (use `{column}` placeholders)
+- **id_column** — Unique row identifier
+- **output_schema** — Expected result structure
+- **output_csv_path** — Where to save combined results
+- **max_concurrency** — How many agents run in parallel
+- **max_runtime_seconds** — Timeout per worker
+
+Each worker must call `report_agent_job_result` exactly once with structured output.
+
+### Example: PR Review with Specialized Agents
+
+Define three custom agents:
+
+1. **pr_explorer** (read-only) — Maps codebase, gathers evidence
+2. **reviewer** (read-only) — Checks correctness, security, test coverage
+3. **docs_researcher** (read-only) — Verifies APIs via MCP docs server
+
+Invoke them naturally:
+
+```
+Have pr_explorer map the affected code paths,
+reviewer find real risks and verify tests are comprehensive,
+and docs_researcher verify the framework APIs are used correctly.
+```
+
+Codex spawns all three, they work in parallel, and report findings back to the parent.
+
+Results include:
+- Affected files and line numbers
+- Security and correctness issues
+- Test coverage gaps
+- API usage verification
+- Recommendations
+
+### Practical Example: Batch Model Evaluation
+
+```
+I need to evaluate 5 models on 3 benchmarks (15 tasks total).
+Process this CSV with one worker per row.
+Column "model" = model name, Column "benchmark" = benchmark name.
+Task: "Load model {model}, run on {benchmark}, report F1 and latency."
+Output to results.csv.
+Max 5 workers in parallel, 30 minute timeout per task.
+```
+
+Codex:
+1. Reads CSV with 15 rows
+2. Spawns up to 5 worker agents
+3. Each worker evaluates one model-benchmark pair
+4. Workers report results to `results.csv`
+5. Parent aggregates and analyzes
+
+### Best Practices in Codex
+
+1. **Request subagents conversationally** — "Spawn agents to..." or "Have agent X research..."
+2. **Use read-only sandbox for reviewers** — Prevents accidental modifications
+3. **Leverage custom agents for specialists** — pr_explorer, security-reviewer, docs_researcher
+4. **Use /agent command to monitor** — Switch threads, check progress, steer agents
+5. **Define CSV batch jobs for parallel work** — Ideal for evaluation, testing, research
+6. **Let subagents inherit parent sandbox** — No need to repeat sandbox settings
+
+</hfoption>
+
+<hfoption id="Pi">
+
+### Install a Subagent Extension
+
+Pi does not ship with built-in subagents, but the official repo includes a `subagent` example extension that spawns isolated `pi` subprocesses.
+
+Project-local setup:
+
+```bash
+mkdir -p .pi/extensions/subagent .pi/agents .pi/prompts
+```
+
+### Custom Agents
+
+Define agents in `.pi/agents/*.md` with YAML frontmatter:
+
+```markdown
+---
+name: researcher
+description: Research-focused agent for deep file exploration
+tools: read, grep, find, ls
+---
+You are an expert researcher. Explore files broadly, compress findings,
+and return only the context another agent will need.
+```
+
+### Workflow Prompts
+
+The example extension also supports reusable prompt templates in `.pi/prompts/`. For example:
+
+```text
+/implement add OAuth2 authentication
+/scout-and-plan refactor auth to support OAuth
+```
+
+### Conversational Invocation
+
+Once the extension is loaded, you can still ask naturally:
+
+```text
+Use scout to map the auth system, then have planner produce an implementation plan.
+Run two reviewers in parallel after the code change.
+```
+
+The extension delegates each subtask to a separate `pi` process with its own context window.
+
+### Best Practices in Pi
+
+Keep agents in `.pi/agents/`, use read-only tool lists for reviewer agents, and rely on prompt templates or explicit requests for orchestration. Because this is extension-driven rather than built in, the exact workflow is yours to tune.
+
+</hfoption>
+</hfoptions>
+
+## Worktree Isolation (Claude Code)
+
+When using subagents for parallel edits, use git worktrees to prevent conflicts:
+
+```bash
+# Main workspace
+git worktree add ../feature-a
+git worktree add ../feature-b
+
+# Subagent A works in feature-a/
+# Subagent B works in feature-b/
+# No conflicts—separate directories
+```
+
+Tell subagents where to work:
+
+```
+Subagent A: Create feature A in ../feature-a/ directory
+Subagent B: Create feature B in ../feature-b/ directory
+Then parent merges both features
+```
+
+## Real-World Example: Code Review Pipeline
+
+**Task:** "Review a proposed payment system for security issues and performance problems"
+
+<hfoptions id="tool">
+<hfoption id="Claude Code">
+
+```
+Main Agent:
+  Task: Review payment system proposal
+  
+  1. Spawn security-reviewer subagent (read-only)
+     Tools: Read, Grep
+     Task: Find vulnerabilities
+  
+  2. Spawn performance-reviewer subagent (read-only)
+     Tools: Read, Grep
+     Task: Identify bottlenecks
+  
+  3. [Both run in parallel]
+  
+  4. Main agent combines findings
+     Output: Final review with risks
+```
+
+Conversationally:
+
+```
+Use subagents to do a security and performance review of the payment system.
+Have security-reviewer look for SQL injection, token leakage, etc.
+Have performance-reviewer look for database queries, caching opportunities.
+Run both in parallel.
+```
+
+</hfoption>
+<hfoption id="Codex">
+
+```
+Spawn two subagents to review the payment system:
+
+Agent 1 (security-reviewer):
+  Task: Find vulnerabilities (SQL injection, token leakage, privilege escalation)
+  
+Agent 2 (performance-reviewer):
+  Task: Find bottlenecks (slow queries, N+1 problems, caching opportunities)
+
+Run both in parallel.
+Combine findings and report risks and recommendations.
+```
+
+Codex:
+1. Spawns security-reviewer and performance-reviewer agents
+2. Both explore the payment_system/ codebase in parallel
+3. Security agent checks for vulnerabilities
+4. Performance agent identifies bottlenecks
+5. Parent agent combines findings into a final review report
+
+Use `/agent` to monitor progress or steer either agent during execution.
+
+</hfoption>
+
+<hfoption id="Pi">
+
+```text
+Use the subagent extension to review the payment system in parallel:
+
+Task 1 (security reviewer):
+  Find SQL injection, token leakage, privilege escalation, and unsafe secrets handling.
+
+Task 2 (performance reviewer):
+  Find slow queries, N+1 patterns, unnecessary work inside request paths, and missing caches.
+
+Run both in parallel, then summarize the risks and concrete fixes.
+```
+
+With the official example extension, this is usually modeled as parallel tasks that each target a named agent from `.pi/agents/`.
+
+</hfoption>
+</hfoptions>
+
+## Key Takeaways
+
+In Claude Code, use conversational invocation, custom agents in `.claude/agents/`, CLAUDE.md policies, and background execution with Ctrl+B. In Codex, request subagents in natural language with three built-in types (default, worker, explorer), define custom TOML agents, monitor with `/agent`, and use CSV batch jobs for parallel work. In Pi, install a subagent extension, define agents in `.pi/agents/`, and drive orchestration through prompt templates or explicit requests. All three approaches help when you have many files, several independent tasks, or need a fresh perspective. For parallel file edits, isolate work with git worktrees.
+
+Next, a hands-on multi-agent workflow.
+
+
+## Quiz 1: Subagent Concepts
+
+# Quiz 1: Subagent Concepts
+
+Test your understanding of subagent patterns, architectures, and when to use them.
+
+## Question 1: What is a subagent?
+
+<Question
+  choices={[
+    {
+      text: "A subagent is a different agent platform (like switching from Claude Code to Codex)",
+      explain: "No. A subagent is a child process spawned by a parent agent within the same platform."
+    },
+    {
+      text: "A subagent is a skill that runs in the background while the main agent works on something else",
+      explain: "Not quite. Subagents are full agents, not just skills. Skills are reusable workflows."
+    },
+    {
+      text: "A subagent is a child agent process spawned by a parent agent to handle a subtask in isolation, then report results back",
+      explain: "Correct! Subagents are independent processes that solve specific subtasks and communicate results to the parent.",
+      correct: true
+    },
+    {
+      text: "A subagent is a way to run the same agent twice for redundancy",
+      explain: "No. Subagents are for dividing work, not duplicating it."
+    }
+  ]}
+/>
+
+## Question 2: What is the fan-out / fan-in pattern?
+
+<Question
+  choices={[
+    {
+      text: "Fan-out/fan-in spawns multiple subagents, each handling a sequential stage; each stage waits for the previous to finish",
+      explain: "That's a pipeline pattern, not fan-out/fan-in. Fan-out/fan-in runs all subagents in parallel."
+    },
+    {
+      text: "Fan-out/fan-in spawns multiple independent subagents in parallel, waits for all to finish, then combines results",
+      explain: "Correct! All work happens simultaneously. Perfect for independent tasks.",
+      correct: true
+    },
+    {
+      text: "Fan-out/fan-in requires a supervisor agent to coordinate the subagents",
+      explain: "Not necessarily. The parent agent can manage it with wait_all() or similar."
+    },
+    {
+      text: "Fan-out/fan-in is the only pattern you should ever use",
+      explain: "No. Different patterns suit different task structures. Pipeline and supervisor are also valuable."
+    }
+  ]}
+/>
+
+## Question 3: What is the pipeline pattern?
+
+<Question
+  choices={[
+    {
+      text: "Pipeline pattern runs all subagents in parallel to maximize speed",
+      explain: "No, that's fan-out/fan-in. Pipeline runs stages sequentially: output of stage 1 → input of stage 2."
+    },
+    {
+      text: "Pipeline pattern chains subagents sequentially, where each stage's output becomes the next stage's input",
+      explain: "Correct! Pipelines are for sequential workflows like design → code → test.",
+      correct: true
+    },
+    {
+      text: "Pipeline pattern requires 10+ subagents to be effective",
+      explain: "No. Pipelines work with any number of stages, often 3-5 is ideal."
+    },
+    {
+      text: "Pipeline and fan-out/fan-in are the same thing",
+      explain: "False. Fan-out/fan-in is parallel. Pipeline is sequential."
+    }
+  ]}
+/>
+
+## Question 4: When should you reach for subagents?
+
+<Question
+  choices={[
+    {
+      text: "Use subagents when you have 10+ files to read or 3+ independent pieces of work",
+      explain: "Correct! The blog post identifies these as the strong signals for subagent use.",
+      correct: true
+    },
+    {
+      text: "Always use subagents if your task takes more than 1 minute",
+      explain: "False. Time doesn't matter. Subagent overhead kills small tasks."
+    },
+    {
+      text: "Use subagents only for parallel work; never for sequential tasks",
+      explain: "False. Pipeline pattern uses subagents for sequential work."
+    },
+    {
+      text: "Use subagents for every task; they always make things faster",
+      explain: "No. Subagent spawn overhead makes them slower for small tasks."
+    }
+  ]}
+/>
+
+## Question 5: What is the supervisor pattern?
+
+<Question
+  choices={[
+    {
+      text: "Supervisor pattern spawns all subagents in parallel to maximize speed",
+      explain: "That's fan-out/fan-in, not supervisor. Supervisor uses specialized agents with different tools."
+    },
+    {
+      text: "Supervisor pattern has a parent agent directing multiple specialist subagents, each with different tools and expertise",
+      explain: "Correct! Supervisor is for when you need multiple specialized agents working on the same problem.",
+      correct: true
+    },
+    {
+      text: "Supervisor pattern requires more than 10 subagents to be effective",
+      explain: "No. Usually 2-5 specialist subagents is ideal with supervisor pattern."
+    },
+    {
+      text: "Supervisor pattern means all subagents have identical tools",
+      explain: "False. Supervisor specifically gives each subagent specialized tools for its domain."
+    }
+  ]}
+/>
+
+---
+
+## Summary
+
+If you got 4-5 correct, the core subagent patterns are in place. If not, revisit the patterns lesson before moving into the hands-on workflow.
+
+## Key Takeaways
+
+- Subagents are isolated child agents, not separate platforms or background skills
+- Fan-out / fan-in is parallel; pipeline is sequential; supervisor coordinates specialists
+- The best signal for subagents is independent or clearly staged work that justifies the coordination overhead
+
+## Next Steps
+
+Next, put these patterns to work in the hands-on multi-agent workflow.
+
+
+## Hands-On: Multi-Agent Workflow
+
+# Hands-On: Multi-Agent Workflow
+
+This project builds a **research → implement → verify** pipeline. A researcher subagent maps the existing code, an implementer writes the change, and two read-only reviewers (security and performance) sign off in parallel before the change is merged.
+
+## Project Setup
+
+Create a new project:
+
+<hfoptions id="tool">
+<hfoption id="Claude Code">
+
+```bash
+mkdir code-quality-pipeline
+cd code-quality-pipeline
+
+# Create files
+mkdir -p .claude/agents
+touch main.py
+touch .claude/CLAUDE.md
+```
+
+</hfoption>
+<hfoption id="Codex">
+
+```bash
+mkdir code-quality-pipeline
+cd code-quality-pipeline
+
+# Create files
+mkdir -p .codex/agents
+touch main.py
+touch AGENTS.md
+```
+
+</hfoption>
+<hfoption id="Pi">
+
+```bash
+mkdir code-quality-pipeline
+cd code-quality-pipeline
+
+# Create files
+mkdir -p .pi/agents .pi/extensions/subagent .pi/prompts
+touch main.py
+touch AGENTS.md
+```
+
+Use the official Pi subagent example (or your own equivalent package) to populate `.pi/extensions/subagent/` before you start Pi.
+
+</hfoption>
+</hfoptions>
+
+## Step 1: Define Custom Agents
+
+The workflow is the same on both platforms: define a narrow researcher, a writer, and two read-only reviewers. The file format differs.
+
+<hfoptions id="tool">
+<hfoption id="Claude Code">
+
+Create `.claude/agents/researcher.md`:
+
+```markdown
+---
+name: researcher
+description: Explores codebase and documents architecture
+tools: Read, Grep, Glob
+model: sonnet
+---
+You are an architecture researcher. Your job is to:
+1. Explore the codebase structure
+2. Identify key modules, dependencies, and patterns
+3. Document the architecture clearly
+4. Note areas for improvement
+
+Be thorough. Read 10+ files to build a complete picture.
+```
+
+Create `.claude/agents/implementer.md`:
+
+```markdown
+---
+name: implementer
+description: Writes code based on specifications
+tools: Read, Write, Glob, Bash
+model: sonnet
+---
+You are a skilled developer. Your job is to:
+1. Read the specification and architecture docs
+2. Write clean, well-tested code
+3. Follow existing patterns and conventions
+4. Document your changes
+
+Focus on correctness and maintainability.
+```
+
+Create `.claude/agents/security-reviewer.md`:
+
+```markdown
+---
+name: security-reviewer
+description: Reviews code for vulnerabilities
+tools: Read, Grep
+model: sonnet
+---
+You are a security expert. Your job is to:
+1. Review code for security vulnerabilities
+2. Check for data leakage, injection attacks, etc.
+3. Recommend fixes
+4. Assess overall security posture
+
+Be thorough. This code might be production-critical.
+```
+
+Create `.claude/agents/performance-reviewer.md`:
+
+```markdown
+---
+name: performance-reviewer
+description: Reviews code for performance issues
+tools: Read, Grep
+model: sonnet
+---
+You are a performance specialist. Your job is to:
+1. Identify performance bottlenecks
+2. Suggest optimizations
+3. Calculate impact
+4. Recommend best practices
+
+Be specific with numbers and concrete suggestions.
+```
+
+</hfoption>
+<hfoption id="Codex">
+
+Create `.codex/agents/researcher.toml`:
+
+```toml
+name = "researcher"
+description = "Read-only codebase explorer for mapping architecture before implementation."
+sandbox_mode = "read-only"
+developer_instructions = """
+Stay in exploration mode.
+Read broadly, trace the real execution path, and summarize patterns before proposing changes.
+"""
+```
+
+Create `.codex/agents/implementer.toml`:
+
+```toml
+name = "implementer"
+description = "Implementation-focused agent for writing the smallest defensible code change."
+developer_instructions = """
+Read the specification and research notes first.
+Own the code change, keep scope tight, and validate what you modify.
+"""
+```
+
+Create `.codex/agents/security-reviewer.toml`:
+
+```toml
+name = "security_reviewer"
+description = "Read-only reviewer focused on vulnerabilities, secrets, and privilege boundaries."
+sandbox_mode = "read-only"
+developer_instructions = """
+Lead with concrete security risks.
+Prioritize data leakage, injection, auth mistakes, and unsafe defaults.
+"""
+```
+
+Create `.codex/agents/performance-reviewer.toml`:
+
+```toml
+name = "performance_reviewer"
+description = "Read-only reviewer focused on latency, query count, and caching opportunities."
+sandbox_mode = "read-only"
+developer_instructions = """
+Look for expensive loops, repeated queries, and missing caches.
+Prefer concrete bottlenecks over generic performance advice.
+"""
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+Create `.pi/agents/researcher.md`:
+
+```markdown
+---
+name: researcher
+description: Explores codebase and documents architecture
+tools: read, grep, find, ls
+---
+You are an architecture researcher. Your job is to:
+1. Explore the codebase structure
+2. Identify key modules, dependencies, and patterns
+3. Document the architecture clearly
+4. Note areas for improvement
+
+Be thorough. Read 10+ files to build a complete picture.
+```
+
+Create `.pi/agents/implementer.md`:
+
+```markdown
+---
+name: implementer
+description: Writes code based on specifications
+tools: read, grep, find, ls, bash, edit, write
+---
+You are a skilled developer. Your job is to:
+1. Read the specification and architecture docs
+2. Write clean, well-tested code
+3. Follow existing patterns and conventions
+4. Document your changes
+
+Focus on correctness and maintainability.
+```
+
+Create `.pi/agents/security-reviewer.md`:
+
+```markdown
+---
+name: security-reviewer
+description: Reviews code for vulnerabilities
+tools: read, grep, find, ls
+---
+You are a security expert. Your job is to:
+1. Review code for security vulnerabilities
+2. Check for data leakage, injection attacks, and unsafe secrets handling
+3. Recommend fixes
+4. Assess overall security posture
+
+Be thorough. This code might be production-critical.
+```
+
+Create `.pi/agents/performance-reviewer.md`:
+
+```markdown
+---
+name: performance-reviewer
+description: Reviews code for performance issues
+tools: read, grep, find, ls
+---
+You are a performance specialist. Your job is to:
+1. Identify performance bottlenecks
+2. Suggest optimizations
+3. Calculate impact
+4. Recommend best practices
+
+Be specific with numbers and concrete suggestions.
+```
+
+</hfoption>
+</hfoptions>
+
+## Step 2: Define Project Policies
+
+Keep the preferred workflow in a repo-level instruction file so the team uses the same sequence every time.
+
+<hfoptions id="tool">
+<hfoption id="Claude Code">
+
+Create `.claude/CLAUDE.md`:
+
+```markdown
+# Code Quality Pipeline
+
+## Architecture
+
+This project uses a multi-agent workflow:
+1. **Research** — Understand existing code
+2. **Implement** — Write new features
+3. **Verify** — Security and performance review
+
+## Workflow Triggers
+
+### Before Implementation
+When the user asks for a new feature:
+1. Use the researcher subagent first
+2. Have it explore the codebase (15+ files)
+3. Document architecture and relevant patterns
+4. Pass findings to implementation stage
+
+### During Implementation
+1. Spawn the implementer subagent
+2. Provide it with:
+   - Feature specification (from user)
+   - Architecture findings (from researcher)
+   - Existing code patterns
+3. Have it write the code
+
+### Before Merge
+1. Spawn security-reviewer and performance-reviewer in parallel
+2. Both are read-only (no Write access)
+3. Collect findings
+4. Report to user before committing
+
+## Example: Add Payment System
+
+User: "Add Stripe integration"
+
+→ Researcher explores payment-related code
+→ Implementer writes integration based on findings
+→ Security-reviewer checks for token leakage
+→ Performance-reviewer checks database queries
+→ User reviews all findings and decides to merge
+```
+
+</hfoption>
+<hfoption id="Codex">
+
+Create `AGENTS.md`:
+
+```markdown
+# Code Quality Pipeline
+
+For feature work, prefer a research -> implement -> verify flow.
+
+- Start by spawning `researcher` to map the affected code paths and document current patterns.
+- Then spawn `implementer` to own the change.
+- Before merge, spawn `security_reviewer` and `performance_reviewer` in parallel and wait for both.
+- Keep review agents read-only and report findings before committing.
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+Create `AGENTS.md`:
+
+```markdown
+# Code Quality Pipeline
+
+For feature work, prefer a research -> implement -> verify flow.
+
+- Start by using `researcher` to map the affected code paths and document current patterns.
+- Then hand the findings to `implementer` so one agent owns the change.
+- Before merge, run `security-reviewer` and `performance-reviewer` in parallel and wait for both.
+- Keep review agents read-only and report findings before committing.
+```
+
+If you use the official subagent example, you can also add project-local prompt templates under `.pi/prompts/` for common flows such as `research -> implement -> review`.
+
+</hfoption>
+</hfoptions>
+
+## Step 3: Using the Pipeline
+
+### Scenario: Add Feature
+
+Prompt your agent:
+
+<hfoptions id="tool">
+<hfoption id="Claude Code">
+
+```
+I want to add OAuth2 authentication.
+
+1. Use the researcher subagent to explore our current auth system.
+   Read the auth module thoroughly (15+ files).
+   Document the current architecture and patterns.
+
+2. Use the implementer subagent to write the OAuth2 integration.
+   Base it on the architecture findings.
+   Follow existing patterns.
+
+3. Once complete, have security-reviewer and performance-reviewer
+   review the code in parallel.
+   I want to see vulnerabilities and bottlenecks before merging.
+```
+
+</hfoption>
+<hfoption id="Codex">
+
+```
+I want to add OAuth2 authentication.
+
+Spawn `researcher` first and have it map our current auth system across 15+ files.
+Then spawn `implementer` to add the OAuth2 integration based on those findings.
+Finally, spawn `security_reviewer` and `performance_reviewer` in parallel, wait for both, and summarize the risks before we merge.
+```
+
+</hfoption>
+
+<hfoption id="Pi">
+
+```
+I want to add OAuth2 authentication.
+
+Use `researcher` to map our current auth system across 15+ files.
+Then use `implementer` to add the OAuth2 integration based on those findings.
+Finally, run `security-reviewer` and `performance-reviewer` in parallel, wait for both, and summarize the risks before we merge.
+```
+
+</hfoption>
+</hfoptions>
+
+Typical result:
+
+```
+Step 1: Spawning researcher subagent...
+  ✓ Exploring auth/ directory
+  ✓ Reading 18 relevant files
+  ✓ Documenting patterns and dependencies
+  → Findings: Current system uses JWT with Redis cache.
+              Token rotation every 1 hour.
+              Validates on every API call.
+
+Step 2: Spawning implementer subagent...
+  ✓ Writing OAuth2 provider integration
+  ✓ Following existing JWT pattern
+  ✓ Added tests
+  → Implementation: 450 lines of new code + tests
+
+Step 3: Spawning security-reviewer and performance-reviewer in parallel...
+  ✓ Security review complete
+    Findings: HTTPS enforced? ✓ Tokens hashed? ✓ No secrets in logs? ✓
+    Recommendation: Add rate limiting to OAuth endpoint
+  
+  ✓ Performance review complete
+    Findings: 3 database queries per auth (expected)
+    Recommendation: Cache OAuth provider metadata
+
+Ready for merge? Review findings above.
+```
+
+## Step 4: Fan-Out Example
+
+When researching, the parent agent can fan out into parallel exploration threads:
+
+```
+Research codebase structure
+
+[Research subagent 1: Explore backend/]
+├─ authentication/
+├─ database/
+└─ api/
+
+[Research subagent 2: Explore frontend/]
+├─ components/
+├─ state/
+└─ pages/
+
+[Research subagent 3: Explore infrastructure/]
+├─ docker/
+├─ kubernetes/
+└─ monitoring/
+
+All 3 run in parallel → Parent aggregates findings
+```
+
+Prompt your agent:
+
+```
+Use 3 subagents to research our codebase:
+- Researcher 1: Backend architecture
+- Researcher 2: Frontend architecture
+- Researcher 3: Infrastructure setup
+
+Each should explore 15+ files and document patterns.
+Then combine findings into an architecture overview.
+```
+
+## Step 5: Pipeline Review Pattern
+
+Classic pipeline: design → code → test → deploy
+
+```
+Stage 1: Architecture Design
+└─ Designer subagent: Create schema, define interfaces
+
+Stage 2: Implementation
+└─ Developer subagent: Write code based on design
+
+Stage 3: Security Review
+└─ Security subagent: Review for vulnerabilities
+
+Stage 4: Testing
+└─ QA subagent: Write and run tests
+
+Stage 5: Deployment Planning
+└─ DevOps subagent: Plan deployment strategy
+
+Parent: Aggregate findings and present to user
+```
+
+Command:
+
+```
+Use a pipeline workflow to implement a new API endpoint:
+
+Stage 1: Design the endpoint schema and request/response formats
+Stage 2: Implement the endpoint using the design
+Stage 3: Security review the implementation
+Stage 4: Write comprehensive tests
+Stage 5: Plan the deployment
+
+Each stage is a subagent. Run sequentially (output of stage N → input to stage N+1).
+```
+
+## Advanced: Keep Automation Separate from Delegation
+
+Use repo instructions to define when review agents should be used. If you also want automation, use the platform's real automation surface instead of inventing a subagent DSL.
+
+<hfoptions id="tool">
+<hfoption id="Claude Code">
+
+Use `.claude/CLAUDE.md` for delegation guidance. If you also want automated checks, use `.claude/settings.json` hooks for commands such as test or lint scripts:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/run-checks.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+</hfoption>
+<hfoption id="Codex">
+
+Use `AGENTS.md` for delegation guidance. Keep runtime limits such as thread caps in `.codex/config.toml`, and ask Codex explicitly when you want it to spawn named agents.
+
+</hfoption>
+
+<hfoption id="Pi">
+
+Use `AGENTS.md` and prompt templates for delegation. Keep automation in extensions, for example `.pi/extensions/pipeline-guard.ts`:
+
+```ts
+
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_call", async (event) => {
+    if (event.toolName !== "bash") return;
+
+    const command = event.input.command as string;
+    if (/rm -rf|git reset --hard/.test(command)) {
+      return { block: true, reason: "Dangerous command blocked by pipeline policy" };
+    }
+  });
+}
+```
+
+</hfoption>
+</hfoptions>
+
+## Example Results
+
+When the pipeline completes:
+
+```json
+{
+  "researcher": {
+    "architecture": {
+      "modules": ["auth", "api", "database"],
+      "patterns": ["MVC", "Repository pattern", "Middleware"],
+      "dependencies": ["Express.js", "MongoDB", "Redis"]
+    }
+  },
+  "implementer": {
+    "files_created": ["oauth2.js", "oauth2.test.js"],
+    "lines_of_code": 450,
+    "test_coverage": 94
+  },
+  "security_reviewer": {
+    "vulnerabilities": 0,
+    "warnings": 1,
+    "recommendations": ["Add rate limiting"]
+  },
+  "performance_reviewer": {
+    "database_queries_per_request": 3,
+    "bottlenecks": 0,
+    "recommendations": ["Cache provider metadata"]
+  }
+}
+```
+
+## Best Practices Demonstrated
+
+This project demonstrates clear stage separation (research, implement, verify), specialized agents with specific tools and prompts, parallel execution for security and performance reviews, pipeline flow where each stage's output feeds the next, and repo-level instructions that keep the workflow consistent for the whole team.
+
+## Key Takeaways
+
+A researcher agent explores and documents, an implementer writes code, and security and performance reviewers sign off in parallel. Define the specialists in `.claude/agents/*.md`, `.codex/agents/*.toml`, or `.pi/agents/*.md`, and keep the workflow in `CLAUDE.md` or `AGENTS.md`. Hooks, extensions, and runtime settings are for automation around the workflow, not for driving subagent orchestration.
+
+Next, the unit 4 quizzes.
+
+
+## Quiz 2: Multi-Agent Workflows
+
+# Quiz 2: Multi-Agent Workflows
+
+Test your ability to design and implement multi-agent workflows.
+
+## Question 1: When is the overhead of subagents worth it?
+
+<Question
+  choices={[
+    {
+      text: "Always spawn as many subagents as possible for maximum parallelism",
+      explain: "More subagents means more token usage, latency, and coordination overhead. Use subagents selectively."
+    },
+    {
+      text: "Use subagents when tasks are independent and parallelizable, and the overhead is justified by the task complexity",
+      explain: "Correct! Subagent workflows consume more tokens than single-agent runs. Only use them when the parallelism benefit outweighs the overhead.",
+      correct: true
+    },
+    {
+      text: "Subagents are only for research tasks; never use for implementation",
+      explain: "False. Worker subagents can implement fixes, write code, and make changes. Codex even has a built-in 'worker' agent type for this."
+    },
+    {
+      text: "Subagents should always share the same context window as the parent",
+      explain: "Subagents run as isolated instances with their own context. They communicate results back to the parent, not share context directly."
+    }
+  ]}
+/>
+
+## Question 2: How do parent agents share context with subagents?
+
+<Question
+  choices={[
+    {
+      text: "Subagents can directly access the parent agent's memory and variables",
+      explain: "False. Subagents are isolated. They receive context from the parent via their task description and report results back."
+    },
+    {
+      text: "Pass small context in the task description; for large data, write to a file and reference the path",
+      explain: "Correct! Subagents can't access parent memory. Use task descriptions for small context and files for larger data.",
+      correct: true
+    },
+    {
+      text: "Use global variables that all subagents can read",
+      explain: "Subagents are separate instances. Global variables don't cross agent boundaries."
+    },
+    {
+      text: "There's no way to share data between parent and subagent",
+      explain: "False. The parent passes context in the task description, and subagents report results back. File system can also be used."
+    }
+  ]}
+/>
+
+## Question 3: How should you design for subagent failure?
+
+<Question
+  choices={[
+    {
+      text: "If a subagent fails, the entire workflow always fails",
+      explain: "Not necessarily. Good design handles failures gracefully — retry, skip, or use partial results."
+    },
+    {
+      text: "Design for failure: use timeouts, handle partial results, and have fallback strategies",
+      explain: "Correct! Subagents can timeout, produce errors, or return unexpected results. Robust workflows handle these cases.",
+      correct: true
+    },
+    {
+      text: "Assume all subagents will succeed; don't add error handling since it's just overhead",
+      explain: "Risky. Network issues, token limits, and unexpected errors are common in multi-agent workflows."
+    },
+    {
+      text: "If a subagent fails, immediately spawn 5 more to retry the same task",
+      explain: "Wasteful. Diagnose the failure first, then retry selectively. Brute-force retries waste tokens."
+    }
+  ]}
+/>
+
+## Question 4: How do Claude Code and Codex expose subagents?
+
+<Question
+  choices={[
+    {
+      text: "Claude Code: use /agent spawn. Codex: use codex-agent spawn. They're identical.",
+      explain: "Neither command exists. Claude Code uses conversational invocation; Codex uses natural language requests to spawn agents."
+    },
+    {
+      text: "Claude Code: conversational invocation + custom agents in .claude/agents/. Codex: natural language requests + custom agents as TOML files in .codex/agents/.",
+      explain: "Correct! Both platforms use natural language to trigger subagent creation, but configure custom agents differently — Claude Code with markdown files, Codex with TOML files.",
+      correct: true
+    },
+    {
+      text: "Claude Code doesn't support subagents. Only Codex does.",
+      explain: "False. Claude Code has robust subagent support via the Agent tool, conversational invocation, and custom agents."
+    },
+    {
+      text: "Both platforms use the exact same subagent API and configuration format",
+      explain: "No. Claude Code uses markdown-based agent definitions; Codex uses TOML. The invocation style is conversational for both but with different capabilities."
+    }
+  ]}
+/>
+
+## Question 5: What built-in agent types does Codex provide?
+
+<Question
+  choices={[
+    {
+      text: "Codex has three built-in agent types: default (general), worker (implementation), and explorer (read-heavy codebase exploration)",
+      explain: "Correct! These three built-in types cover the most common subagent use cases without requiring custom agent definitions.",
+      correct: true
+    },
+    {
+      text: "Codex has no built-in agent types; you must always define custom agents",
+      explain: "False. Codex ships with default, worker, and explorer agents that can be used immediately."
+    },
+    {
+      text: "Codex only supports one agent at a time; there's no parallelism",
+      explain: "False. Codex supports up to max_threads (default 6) concurrent agent threads."
+    },
+    {
+      text: "Codex subagents require a separate codex-agent binary to manage",
+      explain: "False. Subagents are managed through Codex itself — use /agent to switch between threads, or ask Codex in natural language."
+    }
+  ]}
+/>
+
+---
+
+## Summary
+
+If you got 4-5 correct, you're ready to design multi-agent workflows without reaching for subagents unnecessarily. If you missed several, review the platform-specific invocation patterns and failure-handling guidance.
+
+## Key Takeaways
+
+- Use subagents when the task shape justifies isolation or parallelism
+- Pass only the context a child agent needs, and use files when the payload is too large for a prompt
+- Design for retries, partial results, and platform-specific invocation details from the start
+
+## Next Steps
+
+You've finished Unit 4: Subagents. Next up is Unit 5, where you'll add deterministic lifecycle hooks around those same agent workflows.

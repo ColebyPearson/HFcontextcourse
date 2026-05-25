@@ -1,0 +1,12 @@
+# Model Context Protocol SDK (Unit 2)
+mcp>=1.2.0
+
+# Used by the Nano Harness in Unit 6 (and any direct Claude calls)
+anthropic>=0.40.0
+
+# Gradio MCP server (Unit 2) and the hooks dashboard (Unit 5)
+gradio>=5.0.0
+
+# Typed config + validation (skill manifests, plugin schemas)
+pydantic>=2.0.0
+PyYAML>=6.0

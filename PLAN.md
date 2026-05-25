@@ -10,7 +10,7 @@
 | 🟡 | 1 | Skills (built `huggingface-model-publish` skill in `unit_1/`) | — | quiz1, quiz2 (pending) |
 | 🟡 | 2 | MCP (built `text-processor-mcp` in `unit_2/`, deployed to `VoicesColeby/text-processor-mcp`, registered with Claude Code over SSE — `✓ Connected`) | ✅ done | quiz1, quiz2 (pending) |
 | 🟡 | 3 | Plugins (built `text-processor-plugin/` + `marketplace.json`; bundles 3 skills referencing the Unit 2 deployed Space) | — | quiz1, quiz2 (pending) |
-| ☐ | 4 | Sub-agents | ✅ multi-agent workflow | quiz1, quiz2 |
+| 🟡 | 4 | Sub-agents (built `code-quality-pipeline/` — 4 narrow sub-agents + `CLAUDE.md` workflow; pipeline + fan-out/fan-in patterns) | ✅ done | quiz1, quiz2 (pending) |
 | ☐ | 5 | Hooks | ✅ activity dashboard (Gradio) | quiz1, quiz2 |
 | ☐ | 6 | Nano Harness (bonus) | ✅ extend the harness | quiz1 |
 

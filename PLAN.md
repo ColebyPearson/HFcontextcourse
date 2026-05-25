@@ -2,7 +2,7 @@
 
 ## Progress Tracker
 
-**Overall: 1/7 fully done (Unit 0). Units 1 & 2 hands-on built; 4 quizzes pending on the HF site.**
+**Overall: 1/7 fully done (Unit 0); Units 1–6 hands-on all built. 11 quizzes pending on the HF site (Unit 1–5 each have quiz1+quiz2, Unit 6 has one).**
 
 | Done | Unit | Topic | Has hands-on? | Has quizzes? |
 |:----:|------|-------|:-------------:|:------------:|
@@ -12,7 +12,7 @@
 | 🟡 | 3 | Plugins (built `text-processor-plugin/` + `marketplace.json`; bundles 3 skills referencing the Unit 2 deployed Space) | — | quiz1, quiz2 (pending) |
 | 🟡 | 4 | Sub-agents (built `code-quality-pipeline/` — 4 narrow sub-agents + `CLAUDE.md` workflow; pipeline + fan-out/fan-in patterns) | ✅ done | quiz1, quiz2 (pending) |
 | 🟡 | 5 | Hooks (built `agent-activity-dashboard/` — FastAPI `/event` + Gradio UI on port 8000; `.claude/settings.json` logs + a `Bash` guardrail) | ✅ done | quiz1, quiz2 (pending) |
-| ☐ | 6 | Nano Harness (bonus) | ✅ extend the harness | quiz1 |
+| 🟡 | 6 | Nano Harness *(bonus)* (built `nano-harness/nano_harness.py` — full extended loop, 10 tools, restricted `exec()`, errors-as-observations) | ✅ done | quiz1 (pending) |
 
 **Certs**
 - **Context Fundamentals** = Unit 1 + Unit 2 quizzes ≥ 70%.
